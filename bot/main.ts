@@ -34,6 +34,9 @@ import { isValidSnapshot, MarketSim, sanitizeRates, type MarketSeed, type Market
 import { randomSeed } from '../src/core/rng';
 import { DAY, tradingDayKey } from '../src/core/time';
 import { channelsFromEnv, createNotifier } from './notify';
+import { freshMirrorState, OandaClient, OandaMarket, OandaMirror, resolveBaseUrl, type MirrorState } from './oanda';
+import type { Candle, Timeframe } from '../src/core/candles';
+import type { MidLookup, Quote } from '../src/core/rates';
 import { handleRequest, loadOrCreateToken } from './api';
 import type { BotControl, BotStatus } from '../src/core/botTypes';
 
@@ -76,6 +79,7 @@ interface Saved {
   /** Hourly equity snapshots [time, equity]. */
   equity?: [number, number][];
   report?: { day: number; equity: number; trades: number };
+  mirror?: MirrorState;
 }
 
 function loadSaved(): Partial<Saved> {
@@ -144,25 +148,96 @@ function saveMarketSnapshot(market: MarketSim): void {
   }
 }
 
+/** What the bot needs from a price source: the simulator or OANDA's real prices. */
+interface BotMarket {
+  readonly time: number;
+  readonly label: string;
+  readonly real: boolean;
+  quote(symbol: string): Quote | undefined;
+  mid: MidLookup;
+  series(symbol: string, tf: Timeframe): Candle[];
+  isOpen(): boolean;
+  advanceTo(now: number, onStep?: () => void): void;
+}
+
+const maskId = (id: string) => id.replace(/\d(?=\d{3})/g, '•');
+
 async function main(): Promise<void> {
   const saved = loadSaved();
-  const snap = loadMarketSnapshot();
-  const seed = snap ? snap.seed : await chooseSeed(saved);
-  log(`NEONFX bot starting · data ${DATA} · price anchor: ${seed.label}`);
+  log(`NEONFX bot starting · data ${DATA}`);
   const notifier = createNotifier(channelsFromEnv(env), env.NEONFX_NOTIFY === 'all' ? 'all' : 'important', (m) => log(m, 'warn'));
   log(notifier.channels ? `Notifications: ${notifier.channels} channel(s), level ${notifier.level}` : 'Notifications: none configured (see README)');
-  const market = new MarketSim(seed, Date.now(), randomSeed(), snap ?? undefined);
+
+  // ---- price source: OANDA practice (real prices) or the simulator
+  let sim: MarketSim | null = null;
+  let oanda: { client: OandaClient; account: string; market: OandaMarket } | null = null;
+  let brokerError = '';
+  if (env.NEONFX_OANDA_TOKEN) {
+    try {
+      const client = new OandaClient(resolveBaseUrl(env.NEONFX_OANDA_URL), env.NEONFX_OANDA_TOKEN);
+      const account = env.NEONFX_OANDA_ACCOUNT || (await client.firstAccount());
+      log(`Connecting to OANDA practice account ${maskId(account)}: loading real price history...`);
+      const om = await OandaMarket.create(client, account, (m) => log(m, 'warn'));
+      om.start(1000);
+      oanda = { client, account, market: om };
+      log(`OANDA connected: real prices and ${om.candles.EURUSD.H1.length} hourly bars per pair`, 'ok');
+    } catch (e) {
+      brokerError = e instanceof Error ? e.message : String(e);
+      log(`OANDA unavailable: ${brokerError}. Falling back to the simulator`, 'err');
+      notifier.send(`NEONFX · OANDA unavailable: ${brokerError}. Running on the simulator instead.`, 'broker', true);
+    }
+  }
+  let market: BotMarket;
+  const snap = oanda ? null : loadMarketSnapshot();
+  if (oanda) market = oanda.market;
+  else {
+    const seed = snap ? snap.seed : await chooseSeed(saved);
+    const s = new MarketSim(seed, Date.now(), randomSeed(), snap ?? undefined);
+    sim = s;
+    market = {
+      get time() {
+        return s.time;
+      },
+      label: `SIM · ${s.seed.label}`,
+      real: false,
+      quote: (x) => s.quote(x),
+      mid: s.mid,
+      series: (x, tf) => s.series(x, tf),
+      isOpen: () => s.isOpen(),
+      advanceTo: (n, f) => s.advanceTo(n, f),
+    };
+  }
+  log(`Price source: ${market.label}`);
   const engine = new TradingEngine(parseState(saved.account) ?? freshState(), {
     quote: (s) => market.quote(s),
     mid: market.mid,
     now: () => market.time,
     isOpen: () => market.isOpen(),
   });
-  if (snap) {
+  if (snap && sim) {
     const behind = (Date.now() - snap.time) / 3_600_000;
-    log(`Market history restored (${market.candles.EURUSD.H1.length} hourly bars). Simulating the ${behind.toFixed(1)} hours the bot was off...`);
-    market.advanceTo(Date.now(), () => engine.onTick());
+    log(`Market history restored (${sim.candles.EURUSD.H1.length} hourly bars). Simulating the ${behind.toFixed(1)} hours the bot was off...`);
+    sim.advanceTo(Date.now(), () => engine.onTick());
   }
+  const mirror =
+    oanda && flag(env.NEONFX_OANDA_TRADE, false)
+      ? new OandaMirror(
+          oanda.client,
+          oanda.account,
+          saved.mirror ?? freshMirrorState(),
+          engine,
+          market.mid,
+          Math.max(1, Number(env.NEONFX_OANDA_MAX_UNITS) || 100_000),
+          (m, important) => {
+            log(m, important ? 'err' : 'info');
+            if (important) notifier.send(`NEONFX · ${m}`, 'broker', true);
+          },
+        )
+      : null;
+  if (mirror) {
+    await mirror.refreshAccount();
+    log(`OANDA order mirroring ON: account ${mirror.currency} NAV ${mirror.nav ?? '?'}`, 'ok');
+  } else if (oanda) log('OANDA order mirroring OFF (prices only). Set NEONFX_OANDA_TRADE=on to copy trades to the practice account');
   const apState = parseAutopilotState(saved.autopilot) ?? freshAutopilotState();
   apState.config.enabled = flag(env.NEONFX_AUTO, true);
   apState.config.lab = flag(env.NEONFX_LAB, true);
@@ -196,6 +271,13 @@ async function main(): Promise<void> {
   });
   let dataLabel = '';
   const refreshData = () => {
+    if (market.real) {
+      apState.config.labData = 'sim';
+      const ds = marketDatasets((s, tf) => market.series(s, tf), apState.config.tf, apState.config.universe, market.mid);
+      dataLabel = `OANDA ${apState.config.tf}, ${ds.length} pairs (real prices)`;
+      labIn({ type: 'data', datasets: ds, kind: 'real', label: dataLabel });
+      return;
+    }
     const real = realDatasets(market.mid);
     if (real.datasets.length) {
       apState.config.labData = 'csv';
@@ -239,12 +321,14 @@ async function main(): Promise<void> {
       const msg = `FILLED #${p.id} ${p.side.toUpperCase()} ${unitsToLots(p.units)} ${displaySymbol(p.symbol)} @ ${p.entry} SL ${p.sl ?? '-'} TP ${p.tp ?? '-'}`;
       log(msg, 'ok');
       notifier.send(`NEONFX · ${msg}`, 'fill', false);
+      if (mirror) void mirror.onOpen(p);
     } else if (e.type === 'close') {
       const t = e.trade;
       const msg = `CLOSED #${t.positionId} ${displaySymbol(t.symbol)} ${moneySigned(t.net)} (${t.r === null ? '-' : t.r.toFixed(2) + 'R'}) · ${t.reason}`;
       log(msg, t.net >= 0 ? 'ok' : 'warn');
       notifier.send(`NEONFX · ${msg}`, 'close', t.reason === 'stopout');
       autopilot.onClose(t);
+      if (mirror) void mirror.onClose(t);
     } else if (e.type === 'guard-lock') {
       log(`RISK GUARD LOCK: ${e.reason}`, 'err');
       notifier.send(`NEONFX · Risk guard locked trading: ${e.reason}`, 'guard', true);
@@ -295,7 +379,8 @@ async function main(): Promise<void> {
       savedAt: Date.now(),
       account: engine.state,
       autopilot: autopilot.state,
-      market: { t: market.time, rates: market.snapshotRates() },
+      market: { t: market.time, rates: sim ? sim.snapshotRates() : (saved.market?.rates ?? null) },
+      mirror: mirror?.state,
       lab: { hof, stats: labStats ?? {} },
       equity: equityLog,
       report,
@@ -323,7 +408,11 @@ async function main(): Promise<void> {
   }, 5000);
   setInterval(refreshData, 30 * 60_000);
   setInterval(persist, 30_000);
-  setInterval(() => saveMarketSnapshot(market), 60 * 60_000);
+  setInterval(() => sim && saveMarketSnapshot(sim), 60 * 60_000);
+  if (mirror) {
+    setInterval(() => void mirror.syncStops(), 15_000);
+    setInterval(() => void mirror.refreshAccount(), 60_000);
+  }
   setInterval(() => {
     const m = engine.metrics();
     log(
@@ -337,7 +426,7 @@ async function main(): Promise<void> {
     return {
       time: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
-      feed: `SIM · ${market.seed.label}`,
+      feed: market.label,
       marketOpen: market.isOpen(),
       equityHistory: equityLog.slice(-24 * 30),
       account: { ...m, marginLevel: Number.isFinite(m.marginLevel) ? m.marginLevel : null, trades: engine.state.history.length },
@@ -388,7 +477,18 @@ async function main(): Promise<void> {
           robust: e.robust,
         })),
       },
-      broker: null,
+      broker: oanda
+        ? {
+            connected: !oanda.market.error,
+            label: `practice ${maskId(oanda.account)} · ${mirror ? 'mirroring trades' : 'prices only'}`,
+            mirror: !!mirror,
+            nav: mirror?.nav ?? null,
+            openTrades: mirror?.openTrades ?? 0,
+            error: oanda.market.error || mirror?.error || '',
+          }
+        : brokerError
+          ? { connected: false, label: 'OANDA unavailable', mirror: false, nav: null, openTrades: 0, error: brokerError }
+          : null,
       log: recent.slice(-40),
     };
   };
@@ -448,7 +548,8 @@ ${s.marketOpen ? '' : '<div style="color:#ffc23d">FX market closed for the weeke
     stopping = true;
     log(`${sig}: saving state and stopping`);
     persist();
-    saveMarketSnapshot(market);
+    if (sim) saveMarketSnapshot(sim);
+    oanda?.market.stop();
     notifier.send(`NEONFX bot stopped (${sig}). Equity ${money(engine.metrics().equity)}. State saved.`, 'stop', true);
     await notifier.flush(8000);
     process.exit(0);
@@ -458,7 +559,7 @@ ${s.marketOpen ? '' : '<div style="color:#ffc23d">FX market closed for the weeke
   process.on('uncaughtException', (e) => {
     log(`Crash: ${e.stack ?? e.message}`, 'err');
     persist();
-    saveMarketSnapshot(market);
+    if (sim) saveMarketSnapshot(sim);
     notifier.send(`NEONFX bot CRASHED: ${e.message}. It will restart if run under Docker or a service manager.`, 'crash', true);
     void notifier.flush(4000).finally(() => process.exit(1));
   });
