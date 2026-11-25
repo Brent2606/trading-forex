@@ -3,7 +3,7 @@ import { runBacktest } from '../src/core/backtest';
 import {
   ALL_SESSIONS,
   computeFeatures,
-  coreKey,
+  similarSignal,
   crossover,
   describeGenome,
   entryAllowed,
@@ -156,6 +156,10 @@ describe('lab statistics', () => {
     expect(gates(good, good, good)).toEqual({ validated: true, robust: true });
     expect(gates(good, good, bad)).toEqual({ validated: true, robust: false });
     expect(gates(good, bad, good).validated).toBe(false);
+    // breadth: needs 60% of pairs profitable once there are 3+ pairs
+    expect(gates(good, good, good, 0.5, 10).robust).toBe(false);
+    expect(gates(good, good, good, 0.7, 10).robust).toBe(true);
+    expect(gates(good, good, good, 0, 1).robust).toBe(true);
   });
 
   it('a stopped-out trade is exactly -1R (risk includes commission)', () => {
@@ -206,12 +210,19 @@ describe('Lab search', () => {
     }
   });
 
-  it('keeps one leaderboard entry per signal rule', () => {
+  it('keeps one leaderboard entry per signal rule (no near-copies)', () => {
     const lab = new Lab(21, { ...DEFAULT_LAB, popSize: 10, hofSize: 12 });
     lab.setData(datasets, 'sim', 'x');
     for (let k = 0; k < 60; k++) lab.step();
-    const keys = lab.hof().map((e) => coreKey(e.genome));
-    expect(new Set(keys).size).toBe(keys.length);
+    const hof = lab.hof();
+    for (let i = 0; i < hof.length; i++) for (let j = i + 1; j < hof.length; j++) expect(similarSignal(hof[i].genome, hof[j].genome)).toBe(false);
+  });
+
+  it('recognises near-identical signal rules', () => {
+    const a = normalize({ strategy: 'rsi-revert', params: { period: 8, lower: 40, upper: 90 }, slAtr: 3.7, tpAtr: 0, trend: 100, exitOnOpposite: true, sessions: ALL_SESSIONS, vol: 1 });
+    expect(similarSignal(a, normalize({ ...a, params: { period: 8, lower: 40, upper: 89 }, slAtr: 1 }))).toBe(true);
+    expect(similarSignal(a, normalize({ ...a, params: { period: 20, lower: 40, upper: 90 } }))).toBe(false);
+    expect(similarSignal(a, normalize({ ...a, strategy: 'donchian', params: { period: 20 } }))).toBe(false);
   });
 
   it('is deterministic for a seed', () => {
@@ -245,6 +256,9 @@ describe('Lab search', () => {
     expect(e.val.n).toBeGreaterThan(10);
     expect(e.hold.n).toBeGreaterThan(10);
     expect(e.id).toBe(genomeId(g));
+    expect(e.breadthN).toBe(datasets.length);
+    expect(e.breadth).toBeGreaterThanOrEqual(0);
+    expect(e.breadth).toBeLessThanOrEqual(1);
   });
 
   it('checks lessons against history', () => {

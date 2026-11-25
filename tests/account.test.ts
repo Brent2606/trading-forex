@@ -350,6 +350,23 @@ describe('risk guard', () => {
   });
 });
 
+describe('market hours', () => {
+  it('rejects market orders and manual closes while the market is closed', () => {
+    const { e, m } = setup();
+    const p = open(e, { symbol: 'EURUSD', side: 'buy', units: 10_000, type: 'market', slPips: 20 });
+    let open_ = false;
+    (m as unknown as { isOpen: () => boolean }).isOpen = () => open_;
+    const r = e.submit({ symbol: 'EURUSD', side: 'buy', units: 10_000, type: 'market', slPips: 20 });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/closed/);
+    expect(e.close(p.id).ok).toBe(false);
+    expect(e.submit({ symbol: 'EURUSD', side: 'buy', type: 'limit', price: 1.09, units: 1000, slPips: 10 }).ok).toBe(true);
+    expect(e.modify(p.id, { tp: 1.12 }).ok).toBe(true);
+    open_ = true;
+    expect(e.close(p.id).ok).toBe(true);
+  });
+});
+
 describe('persistence', () => {
   let e: TradingEngine;
   beforeEach(() => {

@@ -2,7 +2,7 @@ import { aggregate, applyTick, TIMEFRAMES, type Candle, type Timeframe } from '.
 import { CURRENCIES, INSTRUMENTS, type Ccy, type Instrument } from './instruments';
 import type { MidLookup, Quote } from './rates';
 import { Rng } from './rng';
-import { DAY, HOUR, isFxOpen, isRollover, MIN, sessionMultiplier } from './time';
+import { DAY, HOUR, isFxOpen, isRollover, MIN, nextFxChange, sessionMultiplier } from './time';
 
 /**
  * MARKET SIMULATOR
@@ -122,6 +122,13 @@ export class MarketSim {
   private readonly dx = new Float64Array(NC);
   private lv = 0;
   private live = false;
+  /**
+   * Follow real FX hours: no price moves from Friday 17:00 to Sunday 17:00 New York, then a
+   * weekend gap at the reopen. Turn off only for weekend practice.
+   */
+  respectHours = true;
+  private wasClosed = false;
+  private nextChange = 0;
   private readonly bi: Int32Array;
   private readonly qi: Int32Array;
 
@@ -135,6 +142,18 @@ export class MarketSim {
     this.generateHistory(end);
     this.live = true;
     this.updateQuotes(end, false);
+    this.wasClosed = !isFxOpen(end);
+  }
+
+  /** Whether prices are moving right now. */
+  isOpen(): boolean {
+    return !this.respectHours || isFxOpen(this.time);
+  }
+
+  /** Next open/close instant of the real FX market (cached). */
+  private boundary(): number {
+    if (this.time >= this.nextChange) this.nextChange = nextFxChange(this.time);
+    return this.nextChange;
   }
 
   /** Current volatility regime multiplier (mean-square 1). */
@@ -160,18 +179,44 @@ export class MarketSim {
     return out;
   }
 
-  /** Advances the simulation clock to `now`, calling `onStep` after every step. */
+  /**
+   * Advances the simulation clock to `now`, calling `onStep` after every price step.
+   * Closed-market time is skipped in one jump (prices stay frozen), and the reopen
+   * gets a weekend gap, exactly like the generated history.
+   */
   advanceTo(now: number, onStep?: () => void): void {
-    const gap = now - this.time;
-    if (gap < STEP_MS) return;
-    const steps = Math.min(Math.floor(gap / STEP_MS), MAX_CATCHUP_STEPS);
-    const dt = gap / steps;
-    for (let i = 0; i < steps; i++) {
-      const t = i === steps - 1 ? now : this.time + dt;
-      this.shock(dt / DAY, t);
-      this.time = t;
-      this.updateQuotes(t, true);
-      onStep?.();
+    for (let guard = 0; guard < 16 && this.time < now; guard++) {
+      if (this.respectHours && !isFxOpen(this.time)) {
+        this.wasClosed = true;
+        const reopen = this.boundary();
+        if (reopen > now) {
+          this.time = now;
+          return;
+        }
+        this.time = reopen;
+      }
+      if (this.wasClosed) {
+        this.shock(WEEKEND_GAP_DAYS, this.time);
+        this.wasClosed = false;
+      }
+      const close = this.respectHours ? this.boundary() : Infinity;
+      const end = Math.min(now, close);
+      const closing = end === close;
+      const gap = end - this.time;
+      if (gap <= 0) continue;
+      if (gap < STEP_MS && !closing) return;
+      const steps = Math.max(1, Math.min(Math.floor(gap / STEP_MS), MAX_CATCHUP_STEPS));
+      const dt = gap / steps;
+      for (let i = 0; i < steps; i++) {
+        const last = i === steps - 1;
+        const t = last ? end : this.time + dt;
+        this.shock(dt / DAY, t);
+        this.time = t;
+        // The tick at the closing bell belongs to the last open bar, not a new one.
+        this.updateQuotes(t, true, last && closing ? t - 1 : t);
+        onStep?.();
+      }
+      if (end === now) return;
     }
   }
 
@@ -204,7 +249,7 @@ export class MarketSim {
       (-REGIME_K * this.lv - JUMP_VOL_BUMP * TOTAL_JUMP_RATE) * dtDays + REGIME_ETA * Math.sqrt(dtDays) * rng.normal();
   }
 
-  private updateQuotes(t: number, ticks: boolean): void {
+  private updateQuotes(t: number, ticks: boolean, candleT = t): void {
     const regime = this.regime();
     for (let p = 0; p < INSTRUMENTS.length; p++) {
       const inst = INSTRUMENTS[p];
@@ -225,7 +270,7 @@ export class MarketSim {
         const byTf = this.candles[inst.symbol];
         for (const tf of TIMEFRAMES) {
           const series = byTf[tf];
-          if (applyTick(series, t, bid, tf, vol) && series.length > MAX_BARS[tf]) series.shift();
+          if (applyTick(series, candleT, bid, tf, vol) && series.length > MAX_BARS[tf]) series.shift();
         }
       }
     }

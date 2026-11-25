@@ -58,7 +58,7 @@ export function initDesk(app: App): Desk {
       .map((p) => {
         const row = `<tr data-id="${p.id}">
           <td class="dim">${p.id}</td>
-          <td><b>${displaySymbol(p.symbol)}</b></td>
+          <td><b>${displaySymbol(p.symbol)}</b>${app.positionTag(p.id) ? ` <span class="badge probation" title="Opened by the autopilot">${app.positionTag(p.id)}</span>` : ''}</td>
           <td>${sideHtml(p.side)}</td>
           <td class="r">${fmtLots(unitsToLots(p.units))}</td>
           <td class="r">${px(p.symbol, p.entry)}</td>
@@ -435,6 +435,7 @@ export function initDesk(app: App): Desk {
     aLev.value = String(s.leverage);
     aComm.value = String(s.commissionPerLot);
     aStart.value = String(s.startBalance);
+    $<HTMLInputElement>('a-weekend').checked = app.prefs.weekendPractice;
     tickRisk();
   }
   function tickRisk(): void {
@@ -479,6 +480,12 @@ export function initDesk(app: App): Desk {
     if (e.target === aLev) s.leverage = Number(aLev.value) || s.leverage;
     if (e.target === aComm) s.commissionPerLot = clampNum(aComm, 0, 100, s.commissionPerLot);
     if (e.target === aStart) s.startBalance = Math.round(clampNum(aStart, 100, 100_000_000, s.startBalance));
+    if (e.target === $('a-weekend')) {
+      app.prefs.weekendPractice = $<HTMLInputElement>('a-weekend').checked;
+      app.market.respectHours = !app.prefs.weekendPractice;
+      app.savePrefs();
+      app.log(app.prefs.weekendPractice ? 'Weekend practice ON: the simulator keeps running when the real market is closed' : 'The simulator follows real FX market hours again', 'info');
+    }
     app.saveAccount();
     renderRisk();
   });

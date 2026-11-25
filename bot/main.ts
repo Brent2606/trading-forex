@@ -15,6 +15,7 @@
  *   NEONFX_RISK      risk % per trade (0.5)             NEONFX_TF    H1|H4 (H1)
  *   NEONFX_LAB_DUTY  share of CPU time for the lab, 0.1–1 (1)
  * Put real OHLC CSV exports in <data>/history/ and the lab researches on those instead.
+ * Notifications (Telegram, Discord, Slack, ntfy, webhook): see bot/notify.ts and the README.
  */
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -30,7 +31,8 @@ import type { Dataset, Evaluation, LabStats } from '../src/core/lab';
 import { createLabHost, type LabOut } from '../src/core/labHost';
 import { MarketSim, sanitizeRates, type MarketSeed } from '../src/core/market';
 import { randomSeed } from '../src/core/rng';
-import { DAY } from '../src/core/time';
+import { DAY, tradingDayKey } from '../src/core/time';
+import { channelsFromEnv, createNotifier } from './notify';
 
 const env = process.env;
 const DATA = env.NEONFX_DATA ?? join(process.cwd(), 'data');
@@ -67,6 +69,9 @@ interface Saved {
   autopilot: unknown;
   market: { t: number; rates: unknown };
   lab: { hof: Evaluation[]; stats: Partial<LabStats> };
+  /** Hourly equity snapshots [time, equity]. */
+  equity?: [number, number][];
+  report?: { day: number; equity: number; trades: number };
 }
 
 function loadSaved(): Partial<Saved> {
@@ -118,11 +123,14 @@ async function main(): Promise<void> {
   const saved = loadSaved();
   const seed = await chooseSeed(saved);
   log(`NEONFX bot starting · data ${DATA} · price anchor: ${seed.label}`);
+  const notifier = createNotifier(channelsFromEnv(env), env.NEONFX_NOTIFY === 'all' ? 'all' : 'important', (m) => log(m, 'warn'));
+  log(notifier.channels ? `Notifications: ${notifier.channels} channel(s), level ${notifier.level}` : 'Notifications: none configured (see README)');
   const market = new MarketSim(seed, Date.now(), randomSeed());
   const engine = new TradingEngine(parseState(saved.account) ?? freshState(), {
     quote: (s) => market.quote(s),
     mid: market.mid,
     now: () => market.time,
+    isOpen: () => market.isOpen(),
   });
   const apState = parseAutopilotState(saved.autopilot) ?? freshAutopilotState();
   apState.config.enabled = flag(env.NEONFX_AUTO, true);
@@ -188,21 +196,66 @@ async function main(): Promise<void> {
         pending.set(id, resolve);
         labIn({ type: 'validate', req: id, lesson, genomes });
       }),
-    log,
+    log: (msg, kind) => {
+      log(msg, kind);
+      if (/^AUTOPILOT (deployed|promoted|demoted|benched|learned|upgrade)/.test(msg)) notifier.send(`NEONFX · ${msg.slice(10)}`, 'autopilot', true);
+    },
   });
 
   engine.on((e: EngineEvent) => {
     if (e.type === 'open') {
       const p = e.position;
-      log(`FILLED #${p.id} ${p.side.toUpperCase()} ${unitsToLots(p.units)} ${displaySymbol(p.symbol)} @ ${p.entry} SL ${p.sl ?? '-'} TP ${p.tp ?? '-'}`, 'ok');
+      const msg = `FILLED #${p.id} ${p.side.toUpperCase()} ${unitsToLots(p.units)} ${displaySymbol(p.symbol)} @ ${p.entry} SL ${p.sl ?? '-'} TP ${p.tp ?? '-'}`;
+      log(msg, 'ok');
+      notifier.send(`NEONFX · ${msg}`, 'fill', false);
     } else if (e.type === 'close') {
       const t = e.trade;
-      log(`CLOSED #${t.positionId} ${displaySymbol(t.symbol)} ${moneySigned(t.net)} (${t.r === null ? '-' : t.r.toFixed(2) + 'R'}) · ${t.reason}`, t.net >= 0 ? 'ok' : 'warn');
+      const msg = `CLOSED #${t.positionId} ${displaySymbol(t.symbol)} ${moneySigned(t.net)} (${t.r === null ? '-' : t.r.toFixed(2) + 'R'}) · ${t.reason}`;
+      log(msg, t.net >= 0 ? 'ok' : 'warn');
+      notifier.send(`NEONFX · ${msg}`, 'close', t.reason === 'stopout');
       autopilot.onClose(t);
-    } else if (e.type === 'guard-lock') log(`RISK GUARD LOCK: ${e.reason}`, 'err');
-    else if (e.type === 'margin-call') log(`MARGIN CALL: ${e.level.toFixed(0)}%`, 'err');
-    else if (e.type === 'cancel') log(`CANCELLED #${e.order.id}: ${e.reason}`, 'warn');
+    } else if (e.type === 'guard-lock') {
+      log(`RISK GUARD LOCK: ${e.reason}`, 'err');
+      notifier.send(`NEONFX · Risk guard locked trading: ${e.reason}`, 'guard', true);
+    } else if (e.type === 'margin-call') {
+      log(`MARGIN CALL: ${e.level.toFixed(0)}%`, 'err');
+      notifier.send(`NEONFX · MARGIN CALL: margin level ${e.level.toFixed(0)}%`, 'margin', true);
+    } else if (e.type === 'cancel') log(`CANCELLED #${e.order.id}: ${e.reason}`, 'warn');
   });
+
+  // ---- equity history and daily report
+  const equityLog: [number, number][] = Array.isArray(saved.equity) ? saved.equity.slice(-24 * 180) : [];
+  let report = saved.report ?? { day: tradingDayKey(market.time), equity: engine.metrics().equity, trades: engine.state.history.length };
+  const sendDailyReport = () => {
+    const m = engine.metrics();
+    const closed = engine.state.history.slice(Math.min(report.trades, engine.state.history.length));
+    const wins = closed.filter((t) => t.net > 0).length;
+    const dayPnl = m.equity - report.equity;
+    const deps = autopilot.state.deployments
+      .map((d) => `  ${d.status.toUpperCase()} ${d.desc} · ${d.live.n} trades · ${liveMean(d.live) >= 0 ? '+' : ''}${liveMean(d.live).toFixed(2)}R`)
+      .join('\n');
+    const lessons = autopilot.state.lessons.filter((l) => l.status === 'active').map((l) => `  ${l.label}`).join('\n');
+    const text = [
+      `NEONFX daily report (paper trading)`,
+      `Equity ${money(m.equity)} · day ${moneySigned(dayPnl)} (${report.equity > 0 ? ((dayPnl / report.equity) * 100).toFixed(2) : '0.00'}%)`,
+      `Closed trades: ${closed.length} (${wins} won) · net ${moneySigned(closed.reduce((a, t) => a + t.net, 0))} · open now: ${engine.state.positions.length}`,
+      `Strategies:\n${deps || '  none deployed'}`,
+      `Lessons in force:\n${lessons || '  none'}`,
+      `Lab: ${labStats?.tested ?? 0} tested, best score ${labStats && Number.isFinite(labStats.bestScore) ? labStats.bestScore.toFixed(2) : '-'} (${dataLabel})`,
+    ].join('\n');
+    log(text.replace(/\n/g, ' | '));
+    notifier.send(text, 'report', true);
+    report = { day: tradingDayKey(market.time), equity: m.equity, trades: engine.state.history.length };
+  };
+  setInterval(() => {
+    const now = market.time;
+    const hour = Math.floor(now / 3_600_000) * 3_600_000;
+    if (!equityLog.length || equityLog[equityLog.length - 1][0] < hour) {
+      equityLog.push([hour, Math.round(engine.metrics().equity * 100) / 100]);
+      if (equityLog.length > 24 * 180) equityLog.shift();
+    }
+    if (tradingDayKey(now) !== report.day) sendDailyReport();
+  }, 60_000);
 
   // ---- persistence
   const persist = () => {
@@ -213,6 +266,8 @@ async function main(): Promise<void> {
       autopilot: autopilot.state,
       market: { t: market.time, rates: market.snapshotRates() },
       lab: { hof, stats: labStats ?? {} },
+      equity: equityLog,
+      report,
     };
     try {
       writeFileSync(STATE_FILE + '.tmp', JSON.stringify(data));
@@ -251,6 +306,8 @@ async function main(): Promise<void> {
       time: new Date().toISOString(),
       uptimeSec: Math.round(process.uptime()),
       feed: `SIM · ${market.seed.label}`,
+      marketOpen: market.isOpen(),
+      equityHistory: equityLog.slice(-24 * 30),
       account: { ...m, marginLevel: Number.isFinite(m.marginLevel) ? m.marginLevel : null, trades: engine.state.history.length },
       positions: engine.state.positions.map((p) => ({
         id: p.id,
@@ -291,11 +348,24 @@ async function main(): Promise<void> {
           trainR: Math.round(e.train.meanR * 1000) / 1000,
           validR: Math.round(e.val.meanR * 1000) / 1000,
           holdoutR: Math.round(e.hold.meanR * 1000) / 1000,
+          pairsPositive: e.breadthN ? `${Math.round(e.breadth * e.breadthN)}/${e.breadthN}` : '-',
           robust: e.robust,
         })),
       },
       log: recent.slice(-40),
     };
+  };
+  const sparkline = (pts: [number, number][]) => {
+    if (pts.length < 2) return '<div style="color:#5d5788">Collecting data: one point per hour.</div>';
+    const vs = pts.map((p) => p[1]);
+    const lo = Math.min(...vs);
+    const hi = Math.max(...vs);
+    const span = hi - lo || 1;
+    const w = 600;
+    const h = 90;
+    const path = vs.map((v, i) => `${((i / (vs.length - 1)) * w).toFixed(1)},${(h - 4 - ((v - lo) / span) * (h - 8)).toFixed(1)}`).join(' ');
+    const col = vs[vs.length - 1] >= vs[0] ? '#00f0b5' : '#ff2f7d';
+    return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;max-width:${w}px;height:auto;background:#0d0b19;border:1px solid #2a2452"><polyline fill="none" stroke="${col}" stroke-width="2" points="${path}"/></svg><div style="color:#8f88bf">${escapeHtml(money(lo))} – ${escapeHtml(money(hi))}</div>`;
   };
   const page = () => {
     const s = status();
@@ -303,6 +373,8 @@ async function main(): Promise<void> {
     return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="15"><title>NEONFX bot</title>
 <style>body{margin:0;padding:16px;background:#07060d;color:#ece9ff;font:13px/1.45 ui-monospace,Menlo,monospace}h1{font:700 18px system-ui;color:#2de2ff;margin:0 0 4px}h2{font:600 12px system-ui;letter-spacing:.14em;text-transform:uppercase;color:#8f88bf;margin:18px 0 6px}table{border-collapse:collapse;width:100%;max-width:1100px}td{border-bottom:1px solid #2a2452;padding:4px 8px;vertical-align:top}.wrap{overflow-x:auto}pre{white-space:pre-wrap;color:#8f88bf;font-size:11px}</style></head><body>
 <h1>NEONFX bot</h1><div>${escapeHtml(s.time)} · up ${Math.round(s.uptimeSec / 60)} min · ${escapeHtml(s.feed)} · paper trading</div>
+${s.marketOpen ? '' : '<div style="color:#ffc23d">FX market closed for the weekend: prices are frozen until Sunday 17:00 New York.</div>'}
+<h2>Equity (hourly, last 30 days)</h2>${sparkline(s.equityHistory)}
 <h2>Account</h2><div class="wrap"><table>${row(['Equity', money(s.account.equity)])}${row(['Balance', money(s.account.balance)])}${row(['Floating', moneySigned(s.account.floating)])}${row(['Day P/L', moneySigned(s.account.dayPnl)])}${row(['Closed trades', s.account.trades])}</table></div>
 <h2>Positions</h2><div class="wrap"><table>${s.positions.map((p) => row([`#${p.id}`, displaySymbol(p.symbol), p.side, p.lots, p.entry, `SL ${p.sl ?? '-'}`, `TP ${p.tp ?? '-'}`, moneySigned(p.pl), p.autopilot ? 'autopilot' : 'manual'])).join('') || row(['none'])}</table></div>
 <h2>Autopilot (${s.autopilot.enabled ? 'ON' : 'OFF'}, ${escapeHtml(s.autopilot.mode)}, ${escapeHtml(s.autopilot.timeframe)})</h2><div class="wrap"><table>${s.autopilot.deployments.map((d) => row([d.strategy, d.status, `${d.liveTrades} trades`, `${d.avgR}R`, moneySigned(d.net), `${d.riskPct}%`, d.note])).join('') || row(['waiting for the lab'])}</table></div>
@@ -325,18 +397,29 @@ async function main(): Promise<void> {
     .on('error', (e) => log(`Status server: ${e.message}`, 'err'))
     .listen(PORT, HOST, () => log(`Status page on http://${HOST}:${PORT}/ (JSON at /status)`));
 
-  const shutdown = (sig: string) => {
+  let stopping = false;
+  const shutdown = async (sig: string) => {
+    if (stopping) return;
+    stopping = true;
     log(`${sig}: saving state and stopping`);
     persist();
+    notifier.send(`NEONFX bot stopped (${sig}). Equity ${money(engine.metrics().equity)}. State saved.`, 'stop', true);
+    await notifier.flush(8000);
     process.exit(0);
   };
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('uncaughtException', (e) => {
     log(`Crash: ${e.stack ?? e.message}`, 'err');
     persist();
-    process.exit(1);
+    notifier.send(`NEONFX bot CRASHED: ${e.message}. It will restart if run under Docker or a service manager.`, 'crash', true);
+    void notifier.flush(4000).finally(() => process.exit(1));
   });
+  notifier.send(
+    `NEONFX bot started · equity ${money(engine.metrics().equity)} · autopilot ${apState.config.enabled ? 'ON' : 'OFF'} · lab ${apState.config.lab ? 'ON' : 'OFF'} · ${market.isOpen() ? 'market open' : 'market closed (weekend)'}`,
+    'start',
+    true,
+  );
   log(
     `Autopilot ${apState.config.enabled ? 'ON' : 'OFF'} (${apState.config.mode}, ${apState.config.riskPct}% risk, ${apState.config.tf}) · lab ${apState.config.lab ? 'ON' : 'OFF'} · ${engine.state.positions.length} open positions · balance ${money(engine.state.balance)}`,
   );

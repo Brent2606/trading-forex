@@ -4,12 +4,12 @@ import type { Evaluation, LabStats } from '../core/lab';
 import { checkAlerts, inferCondition, validateAlert, type PriceAlert } from '../core/alerts';
 import { TIMEFRAMES, type Candle, type Timeframe } from '../core/candles';
 import { HELP_LINES, parseCommand, type Command } from '../core/command';
-import { clock, escapeHtml, lots as fmtLots, money, moneySigned, pct, pips as fmtPips, price as fmtPrice } from '../core/format';
+import { clock, duration, escapeHtml, lots as fmtLots, money, moneySigned, pct, pips as fmtPips, price as fmtPrice } from '../core/format';
 import { displaySymbol, FALLBACK_RATES, getInstrument, INSTRUMENTS, unitsToLots } from '../core/instruments';
 import { MarketSim, sanitizeRates, type MarketSeed } from '../core/market';
 import { randomSeed } from '../core/rng';
 import { load, save } from '../core/storage';
-import { DAY } from '../core/time';
+import { DAY, nextFxChange } from '../core/time';
 import { initAnalysis } from './analysis';
 import { initAutopilotPanel } from './autopilotPanel';
 import { LabClient } from './labClient';
@@ -144,10 +144,12 @@ export async function boot(): Promise<void> {
 function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
   initAudioOnGesture();
   const prefs = loadPrefs();
+  market.respectHours = !prefs.weekendPractice;
   const engine = new TradingEngine(state, {
     quote: (s) => market.quote(s),
     mid: market.mid,
     now: () => market.time,
+    isOpen: () => market.isOpen(),
   });
   const alertsRaw = load<PriceAlert[]>('alerts');
   const alerts: PriceAlert[] = Array.isArray(alertsRaw)
@@ -207,6 +209,7 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
     placeOrder,
     nextAlertId: () => ++alertId,
     setTab,
+    positionTag: () => null,
   };
 
   // ---- order placement (ticket, command line, keyboard)
@@ -584,6 +587,18 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
     const t = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-tab]')?.dataset.tab;
     if (t) setTab(t);
   });
+  const maxBtn = $('desk-max');
+  const applyDeskMax = () => {
+    $('app').classList.toggle('desk-max', prefs.deskMax);
+    maxBtn.setAttribute('aria-pressed', String(prefs.deskMax));
+    maxBtn.title = prefs.deskMax ? 'Give the chart more room' : 'Give the desk more room';
+  };
+  maxBtn.addEventListener('click', () => {
+    prefs.deskMax = !prefs.deskMax;
+    applyDeskMax();
+    app.savePrefs();
+  });
+  applyDeskMax();
 
   // ---- command line
   const cmdForm = $('cmd-form');
@@ -783,6 +798,7 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
   engine.on((e) => {
     if (e.type === 'close') autopilot.onClose(e.trade);
   });
+  app.positionTag = (id) => (autopilot.state.owned[String(id)] ? 'AUTO' : null);
 
   // ---- modules
   const ticket = initTicket(app);
@@ -868,6 +884,16 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
 
     slow++;
     if (slow % 4 === 0) {
+      const closed = !market.isOpen();
+      const note = $('chart-note');
+      if (closed && app.chartSource === 'live') {
+        setText(note, `MARKET CLOSED · reopens in ${duration(nextFxChange(Date.now()) - Date.now())}`);
+        note.classList.add('neg');
+      } else if (note.classList.contains('neg')) {
+        note.classList.remove('neg');
+        setText(note, '');
+      }
+      setText(feed, `SIM · ${closed ? 'CLOSED' : market.seed.label}${market.respectHours ? '' : ' · WEEKEND PRACTICE'}`);
       const clk = $('clock');
       const html = `${clock(Date.now())}<small>UTC ${new Date().toISOString().slice(11, 16)}</small>`;
       if (clk.innerHTML !== html) clk.innerHTML = html;

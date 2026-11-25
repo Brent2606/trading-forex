@@ -146,9 +146,17 @@ export function crossover(a: Genome, b: Genome, rng: Rng): Genome {
   });
 }
 
-/** The signal rule alone (strategy + parameters), ignoring stops and filters. */
-export function coreKey(g: Genome): string {
-  return [g.strategy, ...Object.keys(g.params).sort().map((k) => `${k}=${g.params[k]}`)].join('|');
+/**
+ * Two genomes are "the same bet" when they use the same strategy and every parameter is
+ * within 10% of its search range of the other's (e.g. RSI 40/90 vs 40/89).
+ */
+export function similarSignal(a: Genome, b: Genome): boolean {
+  if (a.strategy !== b.strategy) return false;
+  const ranges = SEARCH[a.strategy] ?? {};
+  for (const [k, [min, max]] of Object.entries(ranges)) {
+    if (Math.abs((a.params[k] ?? 0) - (b.params[k] ?? 0)) > 0.1 * (max - min)) return false;
+  }
+  return true;
 }
 
 /** Stable short id (FNV-1a) of a genome's content. */

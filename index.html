@@ -216,6 +216,7 @@
           <button type="button" role="tab" data-tab="correlation">Correlation</button>
           <button type="button" role="tab" data-tab="alerts">Alerts <b id="cnt-al">0</b></button>
           <button type="button" role="tab" data-tab="risk">Risk &amp; account</button>
+          <button type="button" class="tab-max" id="desk-max" aria-pressed="false" title="Give the desk more room" aria-label="Resize the desk">⤢</button>
         </div>
 
         <div class="tabpane" data-pane="autopilot" hidden>
@@ -441,7 +442,8 @@
               </label>
               <label>Commission per lot per side ($) <input id="a-comm" type="number" step="0.5" min="0" /></label>
               <label>Starting balance ($) <input id="a-start" type="number" step="100" min="100" /></label>
-              <p class="fine">Stop-out closes the biggest loser when margin level falls below 50%. A margin-call warning shows below 100%.</p>
+              <label class="check"><input type="checkbox" id="a-weekend" /> Weekend practice: keep the simulator running while the real market is closed</label>
+              <p class="fine">Stop-out closes the biggest loser when margin level falls below 50%. A margin-call warning shows below 100%. By default the simulator follows real FX hours: closed from Friday 17:00 to Sunday 17:00 New York time.</p>
               <div class="inl">
                 <button type="button" class="btn danger" id="a-reset">Reset account</button>
                 <span class="confirm-inline" id="a-reset-confirm" hidden>

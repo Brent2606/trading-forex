@@ -34,6 +34,10 @@ export interface UiPrefs {
   fx: boolean;
   sound: boolean;
   tab: string;
+  /** Keep the simulator running while the real FX market is closed. */
+  weekendPractice: boolean;
+  /** Give the desk (tabs) more height on large screens. */
+  deskMax: boolean;
 }
 
 export const DEFAULT_PREFS: UiPrefs = {
@@ -46,6 +50,8 @@ export const DEFAULT_PREFS: UiPrefs = {
   fx: true,
   sound: true,
   tab: 'positions',
+  weekendPractice: false,
+  deskMax: false,
 };
 
 export function loadPrefs(): UiPrefs {
@@ -118,4 +124,6 @@ export interface App {
   placeOrder(o: OrderIntent): boolean;
   nextAlertId(): number;
   setTab(tab: string): void;
+  /** Short tag for positions opened by automation (e.g. "AUTO"), or null. */
+  positionTag(id: number): string | null;
 }

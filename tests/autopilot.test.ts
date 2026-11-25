@@ -42,7 +42,7 @@ const donchian: Genome = normalize({
 
 function evaluation(g: Genome, over: Partial<Evaluation> = {}): Evaluation {
   const s = segmentStats(Array.from({ length: 40 }, (_, i) => (i % 3 ? 1 : -1)));
-  return { id: genomeId(g), genome: g, desc: 'x', train: s, val: s, hold: s, fitness: 2, score: 2, validated: true, robust: true, at: 0, dataVersion: 0, ...over };
+  return { id: genomeId(g), genome: g, desc: 'x', train: s, val: s, hold: s, fitness: 2, score: 2, breadth: 1, breadthN: 4, validated: true, robust: true, at: 0, dataVersion: 0, ...over };
 }
 
 function setup(opts: { validate?: AutopilotDeps['validate'] } = {}) {
@@ -116,7 +116,8 @@ describe('deployment', () => {
   it('never deploys two copies of the same signal rule', () => {
     const { ap } = setup();
     const twin = normalize({ ...donchian, slAtr: 3 });
-    ap.sync([evaluation(donchian), evaluation(twin)]);
+    const near = normalize({ ...donchian, params: { period: 22 } });
+    ap.sync([evaluation(donchian), evaluation(twin), evaluation(near)]);
     expect(ap.state.deployments).toHaveLength(1);
   });
 
@@ -227,6 +228,18 @@ describe('learning from results', () => {
     expect(d.status).toBe('active');
     expect(ap.riskFor(d)).toBeGreaterThan(ap.state.config.riskPct);
     expect(ap.riskFor(d)).toBeLessThanOrEqual(ap.state.config.riskPct * 1.5);
+  });
+
+  it('demotes an active strategy whose live results fall well below its history', () => {
+    const { d, feed, ap } = deployed();
+    d.expected.valMeanR = 1.5;
+    for (let k = 0; k < 15; k++) feed(k % 3 === 0 ? -1 : 1.2);
+    expect(d.status).toBe('active');
+    expect(d.stage.n).toBe(0);
+    for (let k = 0; k < 20; k++) feed(k % 2 ? 0.4 : -0.3);
+    expect(d.status).toBe('probation');
+    expect(d.note).toMatch(/Demoted/);
+    expect(ap.state.blacklist).not.toContain(d.id);
   });
 
   it('ignores manual closes', () => {

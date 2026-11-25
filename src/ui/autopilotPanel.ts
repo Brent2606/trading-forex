@@ -196,12 +196,16 @@ export function initAutopilotPanel(app: App, ap: Autopilot, lab: LabClient): Aut
                 ? '<span class="badge validated">validated</span>'
                 : '<span class="badge">candidate</span>';
         const stale = e.dataVersion !== v ? ' <span class="dim" title="Being re-tested on the latest data">↻</span>' : '';
-        return `<tr><td class="dim">${i + 1}</td><td class="desc">${escapeHtml(e.desc)}${stale}</td><td class="r">${seg(e.train)}</td><td class="r">${seg(e.val)}</td><td class="r">${seg(e.hold)}</td><td class="r">${typeof e.score === 'number' ? e.score.toFixed(2) : '—'}</td><td>${badge}</td></tr>`;
+        const pairs =
+          typeof e.breadth === 'number' && Number.isFinite(e.breadth) && e.breadthN
+            ? `<span class="${e.breadthN >= 3 && e.breadth < 0.6 ? 'neg' : ''}">${Math.round(e.breadth * e.breadthN)}/${e.breadthN}</span>`
+            : '—';
+        return `<tr><td class="dim">${i + 1}</td><td class="desc">${escapeHtml(e.desc)}${stale}</td><td class="r">${seg(e.train)}</td><td class="r">${seg(e.val)}</td><td class="r">${seg(e.hold)}</td><td class="r">${pairs}</td><td class="r">${typeof e.score === 'number' ? e.score.toFixed(2) : '—'}</td><td>${badge}</td></tr>`;
       })
       .join('');
     $('ap-hof').innerHTML =
-      `<thead><tr><th>#</th><th>Strategy</th><th class="r" title="First 60% of history: what evolution optimises">Train</th><th class="r" title="Next 20%: ranks the leaderboard">Valid</th><th class="r" title="Last 20%: never used for ranking">Holdout</th><th class="r">Score</th><th></th></tr></thead>` +
-      `<tbody>${rows || '<tr><td colspan="7" class="dim">No strategy has passed the first filters yet. The lab keeps searching.</td></tr>'}</tbody>`;
+      `<thead><tr><th>#</th><th>Strategy</th><th class="r" title="First 60% of history: what evolution optimises">Train</th><th class="r" title="Next 20%: ranks the leaderboard">Valid</th><th class="r" title="Last 20%: never used for ranking">Holdout</th><th class="r" title="Pairs profitable out-of-sample (robust needs 60%)">Pairs +</th><th class="r">Score</th><th></th></tr></thead>` +
+      `<tbody>${rows || '<tr><td colspan="8" class="dim">No strategy has passed the first filters yet. The lab keeps searching.</td></tr>'}</tbody>`;
   }
 
   function depRow(d: Deployment): string {

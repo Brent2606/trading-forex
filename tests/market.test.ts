@@ -122,6 +122,50 @@ describe('market simulator', () => {
   });
 });
 
+describe('market hours', () => {
+  const FRI = Date.UTC(2026, 10, 27, 21, 30); // Friday 16:30 New York (winter)
+  const CLOSE = Date.UTC(2026, 10, 27, 22, 0);
+  const REOPEN = Date.UTC(2026, 10, 29, 22, 0); // Sunday 17:00 New York
+
+  it('freezes prices over the weekend and gaps at the reopen', () => {
+    const s = new MarketSim(seed, FRI, 3);
+    s.advanceTo(Date.UTC(2026, 10, 28, 12, 0)); // Saturday noon
+    expect(s.isOpen()).toBe(false);
+    expect(s.time).toBe(Date.UTC(2026, 10, 28, 12, 0));
+    const frozen = s.quote('EURUSD')!;
+    expect(frozen.t).toBeLessThanOrEqual(CLOSE);
+    s.advanceTo(Date.UTC(2026, 10, 29, 12, 0)); // Sunday morning
+    expect(s.quote('EURUSD')).toEqual(frozen);
+    s.advanceTo(REOPEN + 30 * MIN);
+    expect(s.isOpen()).toBe(true);
+    expect(s.quote('EURUSD')!.t).toBe(REOPEN + 30 * MIN);
+    for (const tf of TIMEFRAMES) {
+      for (const b of s.candles.EURUSD[tf]) {
+        expect(b.t >= CLOSE && b.t < REOPEN && bucketStart(b.t, tf) === b.t && tf !== 'D1' && tf !== 'H4').toBe(false);
+      }
+    }
+    const h1 = s.candles.EURUSD.H1;
+    expect(h1[h1.length - 1].t).toBe(REOPEN);
+    expect(h1[h1.length - 2].t).toBe(CLOSE - 3_600_000);
+  });
+
+  it('can keep running for weekend practice', () => {
+    const s = new MarketSim(seed, FRI, 3);
+    s.respectHours = false;
+    s.advanceTo(Date.UTC(2026, 10, 28, 1, 0));
+    expect(s.isOpen()).toBe(true);
+    expect(s.candles.EURUSD.H1.some((b) => b.t >= CLOSE)).toBe(true);
+  });
+
+  it('starts closed when created on a weekend', () => {
+    const s = new MarketSim(seed, Date.UTC(2026, 10, 28, 9, 0), 4);
+    expect(s.isOpen()).toBe(false);
+    const before = s.quote('GBPUSD')!.mid;
+    s.advanceTo(Date.UTC(2026, 10, 28, 20, 0));
+    expect(s.quote('GBPUSD')!.mid).toBe(before);
+  });
+});
+
 describe('helpers', () => {
   it('bidAsk uses integer pipettes', () => {
     expect(bidAsk(1.1000012, 5, 6)).toEqual({ bid: 1.09997, ask: 1.10003 });

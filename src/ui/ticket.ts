@@ -313,6 +313,7 @@ export function initTicket(app: App): Ticket {
     setText(rows.sell, fmtStops('sell'));
     if (g.enabled && g.requireStopLoss && !stop) bad.push('Risk guard requires a stop loss or trailing stop');
     if (g.enabled && app.engine.state.day.locked) bad.push(`Trading locked: ${app.engine.state.day.lockReason}`);
+    if (!app.market.isOpen() && t.type === 'market') bad.push('Market closed for the weekend. Pending orders can still be placed');
     if (q.spread > inst.spread * 2) warns.push(`Spread is wide right now (${q.spread.toFixed(1)} pips)`);
     const html = [...bad.map((b) => `<div class="bad">✕ ${escapeHtml(b)}</div>`), ...warns.map((w) => `<div>! ${escapeHtml(w)}</div>`)].join('');
     if (warnEl.innerHTML !== html) warnEl.innerHTML = html;

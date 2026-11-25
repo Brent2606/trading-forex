@@ -1,7 +1,7 @@
 import type { ClosedTrade, Position, TradingEngine } from './account';
 import type { Candle, Timeframe } from './candles';
 import { atr } from './indicators';
-import { ALL_SESSIONS, computeFeatures, contextAt, coreKey, describeGenome, SESSION_NAMES, signalAt, VOL_NAMES, type Genome, type TradeContext } from './genome';
+import { ALL_SESSIONS, computeFeatures, contextAt, describeGenome, similarSignal, SESSION_NAMES, signalAt, VOL_NAMES, type Genome, type TradeContext } from './genome';
 import { findInstrument, getInstrument, INSTRUMENTS, lotsToUnits } from './instruments';
 import type { Evaluation } from './lab';
 import { pipValuePerLot, type MidLookup, type Quote } from './rates';
@@ -59,7 +59,10 @@ export interface Deployment {
   since: number;
   status: 'probation' | 'active' | 'benched';
   note: string;
+  /** All live trades since deployment. */
   live: LiveStats;
+  /** Live trades since the last status change (promotion / demotion decisions use these). */
+  stage: LiveStats;
 }
 
 export interface JournalEntry {
@@ -167,6 +170,9 @@ export function parseAutopilotState(raw: unknown): AutopilotState | null {
   if (s.version !== 1 || !Array.isArray(s.deployments) || !Array.isArray(s.journal)) return null;
   const fresh = freshAutopilotState();
   const universe = Array.isArray(s.config?.universe) ? s.config.universe.filter((x) => findInstrument(x)) : fresh.config.universe;
+  for (const d of [...s.deployments, ...(Array.isArray(s.retired) ? s.retired : [])]) {
+    if (!d.stage) d.stage = { ...d.live };
+  }
   return {
     ...fresh,
     ...s,
@@ -305,6 +311,7 @@ export class Autopilot {
         expected: { valMeanR: e.val.meanR, holdMeanR: e.hold.meanR, score: e.score, robust: e.robust },
         since: this.deps.now(),
         status: 'probation',
+        stage: emptyLive(),
         note: e.robust ? 'Passed every historical test; now proving itself live' : 'Validated in history, not on the holdout; small risk',
         live: emptyLive(),
       };
@@ -314,12 +321,12 @@ export class Autopilot {
       free--;
       this.deps.log(`AUTOPILOT deployed ${d.desc} on probation (${this.config.probationRiskPct}% risk)`, 'info');
     };
-    const cores = new Set(live.map((d) => coreKey(d.genome)));
+    const chosen = live.map((d) => d.genome);
     for (const sameFamily of [false, true]) {
       for (const e of eligible) {
         if (free <= 0) return;
-        if (deployed.has(e.id) || cores.has(coreKey(e.genome)) || (!sameFamily && families.has(e.genome.strategy))) continue;
-        cores.add(coreKey(e.genome));
+        if (deployed.has(e.id) || chosen.some((g) => similarSignal(g, e.genome)) || (!sameFamily && families.has(e.genome.strategy))) continue;
+        chosen.push(e.genome);
         deploy(e);
       }
     }
@@ -327,7 +334,8 @@ export class Autopilot {
 
   private maybeSwap(eligible: Evaluation[]): void {
     const now = this.deps.now();
-    const best = eligible[0];
+    const live = this.liveDeployments();
+    const best = eligible.find((e) => !live.some((d) => similarSignal(d.genome, e.genome) && d.live.n >= 5));
     if (!best || now - this.state.lastSwap < SWAP_EVERY) return;
     const replaceable = this.liveDeployments()
       .filter((d) => d.status === 'probation' && d.live.n < 5 && this.openOf(d.id).length === 0)
@@ -481,6 +489,7 @@ export class Autopilot {
     if (this.state.journal.length > JOURNAL_CAP) this.state.journal.splice(0, this.state.journal.length - JOURNAL_CAP);
     if (dep) {
       addLive(dep.live, t.r, t.net);
+      addLive(dep.stage, t.r, t.net);
       this.judge(dep);
     }
     if (++this.sinceLearn >= 10) {
@@ -506,10 +515,25 @@ export class Autopilot {
       this.deps.log(`AUTOPILOT benched ${d.desc}: ${bench}`, 'warn');
       return;
     }
-    if (d.status === 'probation' && l.n >= 15 && mean > 0) {
+    const st = d.stage;
+    const sMean = liveMean(st);
+    if (d.status === 'probation' && st.n >= 15 && sMean > 0) {
       d.status = 'active';
-      d.note = `Promoted: +${mean.toFixed(2)}R average over ${l.n} live trades`;
+      d.note = `Promoted: +${sMean.toFixed(2)}R average over ${st.n} live trades`;
+      d.stage = emptyLive();
       this.deps.log(`AUTOPILOT promoted ${d.desc} to full risk (${d.note})`, 'ok');
+      return;
+    }
+    // Decay: still alive, but live results are clearly below what history promised.
+    if (d.status === 'active' && st.n >= 20) {
+      const sd = Math.sqrt(Math.max((st.sumR2 - st.n * sMean * sMean) / (st.n - 1), 1e-12));
+      const tGap = (sMean - d.expected.valMeanR) / (sd / Math.sqrt(st.n));
+      if (tGap <= -2) {
+        d.status = 'probation';
+        d.note = `Demoted: live ${sMean.toFixed(2)}R is well below its historical ${d.expected.valMeanR.toFixed(2)}R. Back to small risk`;
+        d.stage = emptyLive();
+        this.deps.log(`AUTOPILOT demoted ${d.desc}: ${d.note}`, 'warn');
+      }
     }
   }
 

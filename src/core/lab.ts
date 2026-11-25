@@ -3,7 +3,7 @@ import type { Candle } from './candles';
 import {
   computeFeatures,
   contextAt,
-  coreKey,
+  similarSignal,
   crossover,
   describeGenome,
   entryAllowed,
@@ -62,6 +62,9 @@ export interface Evaluation {
   fitness: number;
   /** Hall-of-fame rank: consistency across train and validation. */
   score: number;
+  /** Share of pairs (with 3+ out-of-sample trades) that were profitable out-of-sample. */
+  breadth: number;
+  breadthN: number;
   validated: boolean;
   robust: boolean;
   at: number;
@@ -124,9 +127,21 @@ export function segmentStats(rs: readonly number[]): SegmentStats {
   };
 }
 
-export function gates(train: SegmentStats, val: SegmentStats, hold: SegmentStats): { validated: boolean; robust: boolean } {
+/**
+ * validated: positive in training and validation with a decent profit factor.
+ * robust: also positive on the untouched holdout, with SQN ≥ 1, and (with 3+ pairs)
+ * profitable out-of-sample on at least 60% of the pairs, so one lucky trend can't carry it.
+ */
+export function gates(
+  train: SegmentStats,
+  val: SegmentStats,
+  hold: SegmentStats,
+  breadth = NaN,
+  breadthN = 0,
+): { validated: boolean; robust: boolean } {
   const validated = train.meanR > 0 && val.meanR > 0 && val.n >= 20 && val.pf >= 1.1;
-  const robust = validated && hold.meanR > 0 && hold.n >= 20 && val.sqn >= 1 && train.sqn >= 1;
+  const broad = breadthN < 3 || breadth >= 0.6;
+  const robust = validated && hold.meanR > 0 && hold.n >= 20 && val.sqn >= 1 && train.sqn >= 1 && broad;
   return { validated, robust };
 }
 
@@ -147,6 +162,8 @@ export interface SegmentedR {
   train: number[];
   val: number[];
   hold: number[];
+  /** Out-of-sample (validation + holdout) result per dataset. */
+  perSet: { oosSum: number; oosN: number }[];
 }
 
 /** Runs the genome on every dataset and splits trade R-multiples into the three segments. */
@@ -160,7 +177,7 @@ export function setLabStopSlip(v: number): void {
 }
 
 export function genomeR(g: Genome, datasets: readonly Dataset[], commissionPerLot: number, extra?: ExtraFilter): SegmentedR {
-  const out: SegmentedR = { train: [], val: [], hold: [] };
+  const out: SegmentedR = { train: [], val: [], hold: [], perSet: [] };
   const strategy = strategyById(g.strategy);
   if (!strategy) return out;
   for (const ds of datasets) {
@@ -191,6 +208,7 @@ export function genomeR(g: Genome, datasets: readonly Dataset[], commissionPerLo
       stopSlipAtr: LAB_STOP_SLIP_ATR,
       allowEntry: (i, side) => entryAllowed(g, f, i) && (!extra || extra(contextAt(f, c, i, side))),
     });
+    const set = { oosSum: 0, oosN: 0 };
     for (const t of r.trades) {
       if (!(t.risk > 0)) continue;
       const R = t.net / t.risk;
@@ -198,7 +216,12 @@ export function genomeR(g: Genome, datasets: readonly Dataset[], commissionPerLo
       // Entry happens on the bar after the signal; attribute by the signal bar.
       const i = t.entryIdx - 1;
       (i < b1 ? out.train : i < b2 ? out.val : out.hold).push(R);
+      if (i >= b1) {
+        set.oosSum += R;
+        set.oosN++;
+      }
     }
+    out.perSet.push(set);
   }
   return out;
 }
@@ -211,6 +234,9 @@ export function evaluateGenome(g: Genome, datasets: readonly Dataset[], cfg: Lab
   const penalty = train.n < cfg.minTrades ? (cfg.minTrades - train.n) * 0.08 : 0;
   const fitness = train.sqn - penalty;
   const score = train.n < 20 || val.n < 10 ? -Infinity : Math.min(train.sqn, val.sqn);
+  const counted = seg.perSet.filter((p) => p.oosN >= 3);
+  const breadthN = counted.length;
+  const breadth = breadthN ? counted.filter((p) => p.oosSum > 0).length / breadthN : NaN;
   return {
     id: genomeId(g),
     genome: g,
@@ -220,7 +246,9 @@ export function evaluateGenome(g: Genome, datasets: readonly Dataset[], cfg: Lab
     hold,
     fitness,
     score,
-    ...gates(train, val, hold),
+    breadth,
+    breadthN,
+    ...gates(train, val, hold, breadth, breadthN),
     at: Date.now(),
     dataVersion,
   };
@@ -313,10 +341,9 @@ export class Lab {
   private addToHof(e: Evaluation): void {
     if (this.blacklist.has(e.id) || !(e.score > 0) || e.train.meanR <= 0) return;
     // One entry per signal rule keeps the leaderboard diverse instead of 12 near-copies.
-    const key = coreKey(e.genome);
-    const twin = this.hofList.find((x) => x.id !== e.id && coreKey(x.genome) === key);
-    if (twin && twin.score >= e.score) return;
-    this.hofList = this.hofList.filter((x) => x.id !== e.id && x !== twin);
+    const twins = this.hofList.filter((x) => x.id !== e.id && similarSignal(x.genome, e.genome));
+    if (twins.some((t) => t.score >= e.score)) return;
+    this.hofList = this.hofList.filter((x) => x.id !== e.id && !twins.includes(x));
     this.hofList.push(e);
     this.hofList.sort((a, b) => b.score - a.score);
     this.hofList.length = Math.min(this.hofList.length, this.cfg.hofSize);

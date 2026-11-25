@@ -15,3 +15,9 @@ services:
       NEONFX_RISK: "0.5"
       NEONFX_TF: "H1"
       NEONFX_LAB_DUTY: "1"
+      # Notifications (see README). Keep tokens out of git, e.g. in a .env file next to this one.
+      # NEONFX_NOTIFY: "important"          # or "all" to also get every fill and close
+      # NEONFX_TELEGRAM_TOKEN: "${NEONFX_TELEGRAM_TOKEN}"
+      # NEONFX_TELEGRAM_CHAT: "${NEONFX_TELEGRAM_CHAT}"
+      # NEONFX_NTFY_URL: "https://ntfy.sh/your-long-random-topic"
+      # NEONFX_DISCORD_WEBHOOK: "${NEONFX_DISCORD_WEBHOOK}"

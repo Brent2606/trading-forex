@@ -138,7 +138,11 @@ export interface MarketView {
   quote(symbol: string): Quote | undefined;
   mid: MidLookup;
   now(): number;
+  /** False while the FX market is closed (weekend). Omit for an always-open market. */
+  isOpen?(): boolean;
 }
+
+export const MARKET_CLOSED = 'The FX market is closed for the weekend. It reopens Sunday 17:00 New York time';
 
 export interface AccountMetrics {
   balance: number;
@@ -353,6 +357,7 @@ export class TradingEngine {
     }
 
     if (req.type === 'market') {
+      if (this.market.isOpen && !this.market.isOpen()) return { ok: false, error: MARKET_CLOSED };
       const err = this.preTradeChecks(inst, req);
       if (err) return { ok: false, error: err };
       return this.openPosition(inst, req, q, null);
@@ -440,6 +445,9 @@ export class TradingEngine {
   close(id: number, units?: number, reason: CloseReason = 'manual'): Result<ClosedTrade> {
     const idx = this.state.positions.findIndex((p) => p.id === id);
     if (idx < 0) return { ok: false, error: `No open position #${id}` };
+    if ((reason === 'manual' || reason === 'reverse') && this.market.isOpen && !this.market.isOpen()) {
+      return { ok: false, error: MARKET_CLOSED };
+    }
     const p = this.state.positions[idx];
     const qty = units ?? p.units;
     if (!Number.isInteger(qty) || qty < MIN_UNITS || qty % MIN_UNITS !== 0 || qty > p.units) {

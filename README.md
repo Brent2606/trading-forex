@@ -55,13 +55,17 @@ The **Autopilot** tab (or `auto on` / `lab on` on the command line) automates ev
   "genomes" (strategy type and parameters, ATR stop/target, trend filter, allowed sessions,
   volatility filter). Each one is backtested on every pair and judged in R (profit per unit
   of risk) with walk-forward validation: it evolves on the first 60% of history, is ranked on
-  the next 20%, and the last 20% (holdout) is never used for ranking. The leaderboard keeps
-  one entry per signal rule and re-tests entries as new data arrives.
+  the next 20%, and the last 20% (holdout) is never used for ranking. "Robust" also requires
+  profits out-of-sample on at least 60% of the pairs, so one lucky trend can't carry a rule.
+  The leaderboard keeps one entry per signal rule (near-copies count as one) and re-tests
+  entries as new data arrives.
 * **Autopilot**: trades the best strategies on the paper account. *Explore* deploys
   validated strategies; *Strict* also requires the holdout test. Every strategy starts on
   **probation** at 0.25% risk, is **promoted** to full risk after 15+ live trades with a
   positive average, scaled by its live results, and is **benched** for good after a
-  significantly negative record, 7 losses in a row or a 10R drawdown. A stronger candidate
+  significantly negative record, 7 losses in a row or a 10R drawdown. An active strategy whose
+  live results fall clearly below its historical promise is **demoted** back to probation.
+  Near-identical strategies are never deployed together. A stronger candidate
   can replace an untested probation strategy (at most every 10 minutes). Portfolio limits:
   max open positions, max positions per currency, no opposite positions on one pair, and the
   risk guard still applies.
@@ -98,6 +102,25 @@ npm run bot:docker          # = npm run bot:build && docker compose up -d --buil
 * Echte data: zet CSV-exports (MetaTrader, Dukascopy, HistData, TradingView) in
   `data/history/`. Het lab onderzoekt dan op echte koersen in plaats van de simulator.
 * Logboek: `data/neonfx.log`. Toestand: `data/neonfx-state.json`.
+* De statuspagina toont ook een equity-grafiek (één punt per uur).
+* Net als de echte markt ligt de bot stil van vrijdag 17:00 tot zondag 17:00 New Yorkse tijd.
+
+### Meldingen op je telefoon
+
+De bot stuurt een bericht bij start/stop/crash, als een strategie wordt ingezet, gepromoveerd,
+gedegradeerd of gebankt, bij een nieuwe les, bij een risk-guard-blokkade of margin call, en
+elke handelsdag een **dagrapport**. Met `NEONFX_NOTIFY=all` krijg je ook elke fill en close.
+Stel één of meer kanalen in (in `docker-compose.yml` of als omgevingsvariabele):
+
+| Kanaal | Instellen |
+| --- | --- |
+| **Telegram** | Stuur `/newbot` naar @BotFather en kopieer de token. Stuur je bot een bericht en open `https://api.telegram.org/bot<TOKEN>/getUpdates` voor je `chat.id`. Zet `NEONFX_TELEGRAM_TOKEN` en `NEONFX_TELEGRAM_CHAT`. |
+| **ntfy** (geen account nodig) | Installeer de ntfy-app, abonneer op een lang, willekeurig onderwerp en zet `NEONFX_NTFY_URL=https://ntfy.sh/<onderwerp>`. Iedereen die het onderwerp kent kan meelezen, dus kies iets onraadbaars. |
+| **Discord** | Kanaalinstellingen → Integraties → Webhook. Zet `NEONFX_DISCORD_WEBHOOK`. |
+| **Slack** | Incoming Webhook. Zet `NEONFX_SLACK_WEBHOOK`. |
+| **Eigen systeem** | `NEONFX_WEBHOOK` ontvangt JSON `{"event","text","time"}`. |
+
+Tokens worden alleen uit de omgeving gelezen en nooit gelogd. Zet ze niet in git.
 * Instellingen via omgevingsvariabelen (zie `docker-compose.yml`): `NEONFX_AUTO`, `NEONFX_LAB`,
   `NEONFX_MODE` (`explore`/`strict`), `NEONFX_RISK`, `NEONFX_TF` (`H1`/`H4`),
   `NEONFX_LAB_DUTY` (0.1–1, aandeel CPU-tijd voor het lab), `NEONFX_PORT`, `NEONFX_HOST`,
@@ -121,6 +144,10 @@ occasional news-style jumps. Daily volatility per pair lands in the realistic 0.
   weekend close, and aggregates every timeframe from those so they always agree. H4 and D1
   bars use the New York close (17:00 ET), like most FX brokers.
 * Spreads widen around the 17:00 New York rollover and in thin hours.
+* It follows real FX hours: prices freeze from Friday 17:00 to Sunday 17:00 New York time and
+  the reopen gaps, like the generated history. Market orders and manual closes are refused
+  while closed (pending orders can still be placed). *Risk & account → Weekend practice*
+  keeps the simulator running for practice.
 * It is a random walk with no predictable edge. Backtests on simulated data show how a
   strategy behaves mechanically, not whether it makes money. Use the CSV import for that.
 
