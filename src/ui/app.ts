@@ -12,6 +12,7 @@ import { load, save } from '../core/storage';
 import { DAY, nextFxChange } from '../core/time';
 import { initAnalysis } from './analysis';
 import { initAutopilotPanel } from './autopilotPanel';
+import { initBotPanel } from './botPanel';
 import { LabClient } from './labClient';
 import { initBacktest, tfForBarMs } from './backtestPanel';
 import { CandleChart, type PriceLine } from './chart';
@@ -581,6 +582,7 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
     if (tab === 'correlation') analysis.renderCorrelation();
     if (tab === 'risk') desk.renderRisk();
     if (tab === 'autopilot') apPanel.render();
+    if (tab === 'bot') botPanel.render();
     app.savePrefs();
   }
   tabs.addEventListener('click', (e) => {
@@ -806,6 +808,7 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
   const analysis = initAnalysis(app);
   initBacktest(app);
   const apPanel = initAutopilotPanel(app, autopilot, lab);
+  const botPanel = initBotPanel(app);
   let deskDirty = false;
 
   loadChart(true);

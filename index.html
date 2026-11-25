@@ -207,6 +207,7 @@
       <section class="panel dock" aria-label="Trading desk">
         <div class="tabs" role="tablist" id="tabs">
           <button type="button" role="tab" data-tab="autopilot" class="tab-ap">Autopilot <b id="cnt-ap">OFF</b></button>
+          <button type="button" role="tab" data-tab="bot">24/7 Bot <b id="cnt-bot">—</b></button>
           <button type="button" role="tab" data-tab="positions">Positions <b id="cnt-pos">0</b></button>
           <button type="button" role="tab" data-tab="orders">Orders <b id="cnt-ord">0</b></button>
           <button type="button" role="tab" data-tab="history">History</button>
@@ -263,6 +264,47 @@
                 <div class="mini-h">Live record by session (what the learner sees)</div>
                 <div class="scroll x"><table class="tbl" id="ap-sessions"></table></div>
               </section>
+            </div>
+          </div>
+        </div>
+
+        <div class="tabpane" data-pane="bot" hidden>
+          <div class="ap">
+            <form class="ap-controls" id="bot-form" autocomplete="off">
+              <label>Bot address <input id="bot-url" type="text" spellcheck="false" value="http://127.0.0.1:8787" /></label>
+              <label>Token <input id="bot-token" type="password" placeholder="from data/neonfx-token.txt" /></label>
+              <button type="submit" class="btn ok" id="bot-connect">Connect</button>
+              <button type="button" class="btn" id="bot-disconnect" hidden>Disconnect</button>
+              <span class="ph-note" id="bot-state"></span>
+            </form>
+            <p class="ap-note" id="bot-note"></p>
+            <div id="bot-view" hidden>
+              <div class="ap-controls">
+                <label class="switch"><input type="checkbox" id="bot-auto" /><span>Bot auto-trading</span></label>
+                <label class="switch"><input type="checkbox" id="bot-lab" /><span>Bot strategy lab</span></label>
+                <span class="ph-note" id="bot-meta"></span>
+              </div>
+              <div class="tiles" id="bot-tiles"></div>
+              <div class="ap-grid">
+                <section class="ap-col">
+                  <div class="mini-h">Equity (hourly)</div>
+                  <canvas id="bot-curve" class="bot-curve" aria-label="Bot equity curve"></canvas>
+                  <div class="mini-h">Open positions</div>
+                  <div class="scroll x"><table class="tbl" id="bot-pos"></table></div>
+                  <div class="mini-h">Recent trades</div>
+                  <div class="scroll x"><table class="tbl" id="bot-trades"></table></div>
+                </section>
+                <section class="ap-col">
+                  <div class="mini-h">Strategies</div>
+                  <div class="scroll x"><table class="tbl" id="bot-deps"></table></div>
+                  <div class="mini-h">Lessons</div>
+                  <ul class="ap-lessons" id="bot-lessons"></ul>
+                  <div class="mini-h">Lab leaderboard</div>
+                  <div class="scroll x"><table class="tbl" id="bot-lab"></table></div>
+                  <div class="mini-h">Log</div>
+                  <pre class="bot-log" id="bot-log"></pre>
+                </section>
+              </div>
             </div>
           </div>
         </div>

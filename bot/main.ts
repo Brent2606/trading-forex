@@ -34,6 +34,8 @@ import { isValidSnapshot, MarketSim, sanitizeRates, type MarketSeed, type Market
 import { randomSeed } from '../src/core/rng';
 import { DAY, tradingDayKey } from '../src/core/time';
 import { channelsFromEnv, createNotifier } from './notify';
+import { handleRequest, loadOrCreateToken } from './api';
+import type { BotControl, BotStatus } from '../src/core/botTypes';
 
 const env = process.env;
 const DATA = env.NEONFX_DATA ?? join(process.cwd(), 'data');
@@ -330,7 +332,7 @@ async function main(): Promise<void> {
   }, 15 * 60_000);
 
   // ---- status server (read-only)
-  const status = () => {
+  const status = (): BotStatus => {
     const m = engine.metrics();
     return {
       time: new Date().toISOString(),
@@ -350,6 +352,10 @@ async function main(): Promise<void> {
         pl: Math.round(engine.floating(p) * 100) / 100,
         autopilot: !!autopilot.state.owned[String(p.id)],
       })),
+      recentTrades: engine.state.history
+        .slice(-20)
+        .reverse()
+        .map((t) => ({ closeTime: t.closeTime, symbol: t.symbol, side: t.side, lots: unitsToLots(t.units), net: t.net, r: t.r, reason: t.reason })),
       autopilot: {
         enabled: apState.config.enabled,
         mode: apState.config.mode,
@@ -382,6 +388,7 @@ async function main(): Promise<void> {
           robust: e.robust,
         })),
       },
+      broker: null,
       log: recent.slice(-40),
     };
   };
@@ -412,20 +419,28 @@ ${s.marketOpen ? '' : '<div style="color:#ffc23d">FX market closed for the weeke
 <h2>Lab (${escapeHtml(s.lab.data)})</h2><div>generation ${s.lab.generation} · ${s.lab.tested} tested · ${s.lab.perMinute}/min</div><div class="wrap"><table>${s.lab.best.map((b) => row([b.strategy, `score ${b.score}`, `train ${b.trainR}R`, `valid ${b.validR}R`, `holdout ${b.holdoutR}R`, b.robust ? 'robust' : ''])).join('')}</table></div>
 <h2>Log</h2><pre>${escapeHtml(s.log.slice().reverse().join('\n'))}</pre></body></html>`;
   };
-  createServer((rq, rs) => {
-    if (rq.method !== 'GET') {
-      rs.writeHead(405).end();
-      return;
+  const access = loadOrCreateToken(DATA, env.NEONFX_TOKEN);
+  const control = (c: BotControl) => {
+    if (c.auto !== undefined && c.auto !== apState.config.enabled) {
+      apState.config.enabled = c.auto;
+      const msg = `Autopilot switched ${c.auto ? 'ON' : 'OFF'} from the terminal`;
+      log(msg);
+      notifier.send(`NEONFX · ${msg}`, 'control', true);
     }
-    const url = (rq.url ?? '/').split('?')[0];
-    if (url === '/status') {
-      rs.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }).end(JSON.stringify(status(), null, 1));
-    } else if (url === '/') {
-      rs.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }).end(page());
-    } else rs.writeHead(404).end('not found');
-  })
+    if (c.lab !== undefined && c.lab !== apState.config.lab) {
+      apState.config.lab = c.lab;
+      labIn({ type: 'run', on: c.lab, duty: DUTY });
+      log(`Lab switched ${c.lab ? 'ON' : 'OFF'} from the terminal`);
+    }
+    persist();
+  };
+  createServer((rq, rs) => handleRequest(rq, rs, { token: access.token, status, page, control }))
     .on('error', (e) => log(`Status server: ${e.message}`, 'err'))
-    .listen(PORT, HOST, () => log(`Status page on http://${HOST}:${PORT}/ (JSON at /status)`));
+    .listen(PORT, HOST, () =>
+      log(
+        `Status page on http://${HOST}:${PORT}/ · terminal API at /api (token ${access.created ? 'created' : 'stored'} in ${access.token === env.NEONFX_TOKEN ? 'NEONFX_TOKEN' : access.file})`,
+      ),
+    );
 
   let stopping = false;
   const shutdown = async (sig: string) => {
