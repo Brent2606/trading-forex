@@ -19,6 +19,7 @@
  */
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { freshState, parseState, TradingEngine, type EngineEvent } from '../src/core/account';
 import { Autopilot, freshAutopilotState, liveMean, parseAutopilotState, type ApLogKind, type Lesson } from '../src/core/autopilot';
@@ -29,7 +30,7 @@ import type { Genome } from '../src/core/genome';
 import { displaySymbol, FALLBACK_RATES, unitsToLots } from '../src/core/instruments';
 import type { Dataset, Evaluation, LabStats } from '../src/core/lab';
 import { createLabHost, type LabOut } from '../src/core/labHost';
-import { MarketSim, sanitizeRates, type MarketSeed } from '../src/core/market';
+import { isValidSnapshot, MarketSim, sanitizeRates, type MarketSeed, type MarketSnapshot } from '../src/core/market';
 import { randomSeed } from '../src/core/rng';
 import { DAY, tradingDayKey } from '../src/core/time';
 import { channelsFromEnv, createNotifier } from './notify';
@@ -39,6 +40,7 @@ const DATA = env.NEONFX_DATA ?? join(process.cwd(), 'data');
 const HISTORY = join(DATA, 'history');
 const STATE_FILE = join(DATA, 'neonfx-state.json');
 const LOG_FILE = join(DATA, 'neonfx.log');
+const MARKET_FILE = join(DATA, 'neonfx-market.json.gz');
 const PORT = Number(env.NEONFX_PORT ?? 8787);
 const HOST = env.NEONFX_HOST ?? '127.0.0.1';
 const DUTY = Math.min(1, Math.max(0.1, Number(env.NEONFX_LAB_DUTY ?? 1) || 1));
@@ -119,19 +121,46 @@ function realDatasets(mid: MarketSim['mid']): { datasets: Dataset[]; names: stri
   return { datasets, names };
 }
 
+/** The simulated market of the previous run, so history and prices continue after a restart. */
+function loadMarketSnapshot(): MarketSnapshot | null {
+  try {
+    const snap: unknown = JSON.parse(gunzipSync(readFileSync(MARKET_FILE)).toString('utf8'));
+    if (isValidSnapshot(snap) && Date.now() - snap.time < 14 * DAY && snap.time <= Date.now()) return snap;
+    log('Saved market history is too old or invalid; generating fresh history', 'warn');
+  } catch {
+    /* no snapshot yet */
+  }
+  return null;
+}
+
+function saveMarketSnapshot(market: MarketSim): void {
+  try {
+    writeFileSync(MARKET_FILE + '.tmp', gzipSync(JSON.stringify(market.snapshot())));
+    renameSync(MARKET_FILE + '.tmp', MARKET_FILE);
+  } catch (e) {
+    log(`Could not save market history: ${e instanceof Error ? e.message : String(e)}`, 'err');
+  }
+}
+
 async function main(): Promise<void> {
   const saved = loadSaved();
-  const seed = await chooseSeed(saved);
+  const snap = loadMarketSnapshot();
+  const seed = snap ? snap.seed : await chooseSeed(saved);
   log(`NEONFX bot starting · data ${DATA} · price anchor: ${seed.label}`);
   const notifier = createNotifier(channelsFromEnv(env), env.NEONFX_NOTIFY === 'all' ? 'all' : 'important', (m) => log(m, 'warn'));
   log(notifier.channels ? `Notifications: ${notifier.channels} channel(s), level ${notifier.level}` : 'Notifications: none configured (see README)');
-  const market = new MarketSim(seed, Date.now(), randomSeed());
+  const market = new MarketSim(seed, Date.now(), randomSeed(), snap ?? undefined);
   const engine = new TradingEngine(parseState(saved.account) ?? freshState(), {
     quote: (s) => market.quote(s),
     mid: market.mid,
     now: () => market.time,
     isOpen: () => market.isOpen(),
   });
+  if (snap) {
+    const behind = (Date.now() - snap.time) / 3_600_000;
+    log(`Market history restored (${market.candles.EURUSD.H1.length} hourly bars). Simulating the ${behind.toFixed(1)} hours the bot was off...`);
+    market.advanceTo(Date.now(), () => engine.onTick());
+  }
   const apState = parseAutopilotState(saved.autopilot) ?? freshAutopilotState();
   apState.config.enabled = flag(env.NEONFX_AUTO, true);
   apState.config.lab = flag(env.NEONFX_LAB, true);
@@ -292,6 +321,7 @@ async function main(): Promise<void> {
   }, 5000);
   setInterval(refreshData, 30 * 60_000);
   setInterval(persist, 30_000);
+  setInterval(() => saveMarketSnapshot(market), 60 * 60_000);
   setInterval(() => {
     const m = engine.metrics();
     log(
@@ -403,6 +433,7 @@ ${s.marketOpen ? '' : '<div style="color:#ffc23d">FX market closed for the weeke
     stopping = true;
     log(`${sig}: saving state and stopping`);
     persist();
+    saveMarketSnapshot(market);
     notifier.send(`NEONFX bot stopped (${sig}). Equity ${money(engine.metrics().equity)}. State saved.`, 'stop', true);
     await notifier.flush(8000);
     process.exit(0);
@@ -412,6 +443,7 @@ ${s.marketOpen ? '' : '<div style="color:#ffc23d">FX market closed for the weeke
   process.on('uncaughtException', (e) => {
     log(`Crash: ${e.stack ?? e.message}`, 'err');
     persist();
+    saveMarketSnapshot(market);
     notifier.send(`NEONFX bot CRASHED: ${e.message}. It will restart if run under Docker or a service manager.`, 'crash', true);
     void notifier.flush(4000).finally(() => process.exit(1));
   });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { bucketStart, TIMEFRAMES } from '../src/core/candles';
 import { FALLBACK_RATES, INSTRUMENTS } from '../src/core/instruments';
-import { bidAsk, H1_HISTORY_BARS, M1_HISTORY_BARS, MarketSim, sanitizeRates } from '../src/core/market';
+import { bidAsk, H1_HISTORY_BARS, isValidSnapshot, M1_HISTORY_BARS, MarketSim, sanitizeRates } from '../src/core/market';
 import { DAY, isFxOpen, MIN } from '../src/core/time';
 
 const NOW = Date.UTC(2026, 10, 25, 14, 37, 21); // Wednesday
@@ -119,6 +119,33 @@ describe('market simulator', () => {
     const r = sim.snapshotRates();
     expect(r.USD).toBeCloseTo(1, 12);
     expect(1 / r.EUR).toBeCloseTo(sim.quote('EURUSD')!.mid, 3);
+  });
+});
+
+describe('snapshots', () => {
+  it('restores the same market and keeps running', () => {
+    const a = new MarketSim(seed, NOW, 31);
+    a.advanceTo(NOW + 20 * MIN);
+    const snap = JSON.parse(JSON.stringify(a.snapshot()));
+    expect(isValidSnapshot(snap)).toBe(true);
+    const b = new MarketSim(seed, 0, 99, snap);
+    expect(b.time).toBe(a.time);
+    for (const inst of INSTRUMENTS) {
+      expect(b.quote(inst.symbol)).toEqual(a.quote(inst.symbol));
+      expect(b.candles[inst.symbol].H1.slice(-50)).toEqual(a.candles[inst.symbol].H1.slice(-50));
+      expect(b.candles[inst.symbol].M1.slice(-30)).toEqual(a.candles[inst.symbol].M1.slice(-30));
+    }
+    const lastH1 = b.candles.EURUSD.H1.length;
+    b.advanceTo(b.time + 2 * 3_600_000);
+    expect(b.candles.EURUSD.H1.length).toBeGreaterThan(lastH1);
+    expect(b.isOpen()).toBe(true);
+  });
+
+  it('rejects broken snapshots', () => {
+    const snap = new MarketSim(seed, NOW, 5).snapshot();
+    expect(isValidSnapshot({ ...snap, x: [1, 2] })).toBe(false);
+    expect(isValidSnapshot({ ...snap, bars: { ...snap.bars, EURUSD: { h1: [1, 2, 3], m1: [] } } })).toBe(false);
+    expect(isValidSnapshot(null)).toBe(false);
   });
 });
 

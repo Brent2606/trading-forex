@@ -25,6 +25,45 @@ export interface MarketSeed {
   label: string;
 }
 
+/**
+ * Everything needed to continue a simulated market later: the currency state and the bar
+ * history (H1 for research, recent M1 for short charts). Bars are flat [t,o,h,l,c,v,...].
+ */
+export interface MarketSnapshot {
+  v: 1;
+  time: number;
+  x: number[];
+  lv: number;
+  wasClosed: boolean;
+  seed: MarketSeed;
+  bars: Record<string, { h1: number[]; m1: number[] }>;
+}
+
+const flatten = (bars: readonly Candle[]): number[] => {
+  const out: number[] = [];
+  for (const b of bars) out.push(b.t, b.o, b.h, b.l, b.c, b.v);
+  return out;
+};
+const unflatten = (a: readonly number[]): Candle[] => {
+  const out: Candle[] = [];
+  for (let i = 0; i + 5 < a.length; i += 6) out.push({ t: a[i], o: a[i + 1], h: a[i + 2], l: a[i + 3], c: a[i + 4], v: a[i + 5] });
+  return out;
+};
+
+/** Validates a snapshot read from disk. */
+export function isValidSnapshot(s: unknown): s is MarketSnapshot {
+  if (!s || typeof s !== 'object') return false;
+  const m = s as MarketSnapshot;
+  if (m.v !== 1 || !Number.isFinite(m.time) || !Array.isArray(m.x) || m.x.length !== CURRENCIES.length) return false;
+  if (!m.x.every(Number.isFinite) || !Number.isFinite(m.lv) || !m.seed || !m.bars) return false;
+  for (const inst of INSTRUMENTS) {
+    const b = m.bars[inst.symbol];
+    if (!b || !Array.isArray(b.h1) || !Array.isArray(b.m1) || b.h1.length % 6 || b.m1.length % 6 || b.h1.length < 6 * 300) return false;
+    if (!b.h1.every(Number.isFinite) || !b.m1.every(Number.isFinite)) return false;
+  }
+  return true;
+}
+
 export interface VolEvent {
   t: number;
   ccy: Ccy;
@@ -132,17 +171,53 @@ export class MarketSim {
   private readonly bi: Int32Array;
   private readonly qi: Int32Array;
 
-  constructor(seed: MarketSeed, now: number, rngSeed: number) {
-    this.seed = seed;
+  /**
+   * Generates fresh history ending at `now`, or continues from a snapshot (then call
+   * advanceTo(Date.now()) to simulate the time the snapshot was not running).
+   */
+  constructor(seed: MarketSeed, now: number, rngSeed: number, snapshot?: MarketSnapshot) {
+    this.seed = snapshot ? snapshot.seed : seed;
     this.rng = new Rng(rngSeed);
     this.bi = Int32Array.from(INSTRUMENTS.map((i) => CCY_INDEX[i.base]));
     this.qi = Int32Array.from(INSTRUMENTS.map((i) => CCY_INDEX[i.quote]));
+    if (snapshot) {
+      this.time = snapshot.time;
+      snapshot.x.forEach((v, c) => (this.x[c] = v));
+      this.lv = snapshot.lv;
+      for (const inst of INSTRUMENTS) {
+        const b = snapshot.bars[inst.symbol];
+        const m1 = unflatten(b.m1);
+        const h1 = unflatten(b.h1);
+        this.candles[inst.symbol] = {
+          M1: m1,
+          M5: aggregate(m1, 'M5'),
+          M15: aggregate(m1, 'M15'),
+          H1: h1,
+          H4: aggregate(h1, 'H4'),
+          D1: aggregate(h1, 'D1'),
+        };
+      }
+      this.live = true;
+      this.updateQuotes(this.time, false);
+      this.wasClosed = snapshot.wasClosed;
+      return;
+    }
     const end = Math.floor(now / MIN) * MIN;
     this.time = end;
     this.generateHistory(end);
     this.live = true;
     this.updateQuotes(end, false);
     this.wasClosed = !isFxOpen(end);
+  }
+
+  /** A compact copy of the market for saving (last `maxH1` hourly and `maxM1` minute bars). */
+  snapshot(maxH1 = 6500, maxM1 = 1440): MarketSnapshot {
+    const bars: MarketSnapshot['bars'] = {};
+    for (const inst of INSTRUMENTS) {
+      const c = this.candles[inst.symbol];
+      bars[inst.symbol] = { h1: flatten(c.H1.slice(-maxH1)), m1: flatten(c.M1.slice(-maxM1)) };
+    }
+    return { v: 1, time: this.time, x: [...this.x], lv: this.lv, wasClosed: this.wasClosed, seed: this.seed, bars };
   }
 
   /** Whether prices are moving right now. */
