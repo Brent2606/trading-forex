@@ -3,6 +3,7 @@ import { TIMEFRAMES, type Timeframe } from '../core/candles';
 import { parseCsv } from '../core/csv';
 import { escapeHtml, integer, money, moneySigned, pct, ratio } from '../core/format';
 import { ACCOUNT_CCY, displaySymbol, findInstrument, getInstrument } from '../core/instruments';
+import { getLang, tr } from '../core/i18n';
 import { LAB_STOP_SLIP_ATR } from '../core/lab';
 import { convert } from '../core/rates';
 import { $, setText } from './dom';
@@ -146,7 +147,9 @@ export function initBacktest(app: App): { onChartChange(): void } {
     const lowSample = s.trades < 30 ? `Only ${s.trades} trades: too few to trust. ` : '';
     setText(
       $('bt-note'),
-      `${strategy.name} on ${describeSource()} · ${integer(candles.length)} bars in ${ms.toFixed(0)} ms. ${lowSample}${note}Entries fill at the next bar's open with spread and commission; stops fill ${LAB_STOP_SLIP_ATR}×ATR past the stop price (slippage) and are assumed hit before targets inside a bar.`,
+      getLang() === 'nl'
+        ? `${tr(strategy.name)} op ${describeSource()} · ${integer(candles.length)} candles in ${ms.toFixed(0)} ms. ${s.trades < 30 ? `Maar ${s.trades} trades: te weinig om op te vertrouwen. ` : ''}${useCsv ? '' : 'Gesimuleerde koersen zijn een random walk, dus geen enkele strategie heeft hier een echte voorsprong en door de kosten verliezen de meeste. Importeer echte broker-data (CSV) om een idee echt te testen. '}Instappen gebeurt op de open van de volgende candle met spread en commissie; stops worden ${LAB_STOP_SLIP_ATR}×ATR voorbij de stopprijs gevuld (slippage) en gaan binnen een candle vóór targets.`
+        : `${strategy.name} on ${describeSource()} · ${integer(candles.length)} bars in ${ms.toFixed(0)} ms. ${lowSample}${note}Entries fill at the next bar's open with spread and commission; stops fill ${LAB_STOP_SLIP_ATR}×ATR past the stop price (slippage) and are assumed hit before targets inside a bar.`,
     );
     const th = getComputedStyle(document.documentElement);
     const up = th.getPropertyValue('--up').trim() || '#00f0b5';
@@ -192,7 +195,10 @@ export function initBacktest(app: App): { onChartChange(): void } {
         tfSel.disabled = true;
         const first = new Date(res.candles[0].t).toISOString().slice(0, 16).replace('T', ' ');
         const last = new Date(res.candles[res.candles.length - 1].t).toISOString().slice(0, 16).replace('T', ' ');
-        $('bt-csv-info').innerHTML = `Imported <b>${escapeHtml(file.name)}</b>: ${integer(res.candles.length)} bars, ${first} → ${last} UTC, bar ≈ ${tfForBarMs(res.barMs)}, pair ${res.symbol ? displaySymbol(res.symbol) : 'unknown'}, pip ${res.pip}${res.skipped ? `, ${res.skipped} rows skipped` : ''}.`;
+        $('bt-csv-info').innerHTML =
+          getLang() === 'nl'
+            ? `<b>${escapeHtml(file.name)}</b> geïmporteerd: ${integer(res.candles.length)} candles, ${first} → ${last} UTC, candle ≈ ${tfForBarMs(res.barMs)}, paar ${res.symbol ? displaySymbol(res.symbol) : 'onbekend'}, pip ${res.pip}${res.skipped ? `, ${res.skipped} regels overgeslagen` : ''}.`
+            : `Imported <b>${escapeHtml(file.name)}</b>: ${integer(res.candles.length)} bars, ${first} → ${last} UTC, bar ≈ ${tfForBarMs(res.barMs)}, pair ${res.symbol ? displaySymbol(res.symbol) : 'unknown'}, pip ${res.pip}${res.skipped ? `, ${res.skipped} rows skipped` : ''}.`;
         app.showCsvOnChart();
         app.toast('Imported', `${integer(res.candles.length)} bars from ${file.name}`, 'ok');
       } catch (err) {

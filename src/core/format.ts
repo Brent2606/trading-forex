@@ -1,3 +1,5 @@
+import { months } from './i18n';
+
 const usd2 = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const int = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
 
@@ -52,23 +54,21 @@ export function clock(t: number): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
 /** Local "25 Nov 14:05". */
 export function dateTime(t: number): string {
   const d = new Date(t);
-  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${d.getDate()} ${months()[d.getMonth()]} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 export function shortDate(t: number, utc = false): string {
   const d = new Date(t);
-  return utc ? `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}` : `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+  return utc ? `${d.getUTCDate()} ${months()[d.getUTCMonth()]}` : `${d.getDate()} ${months()[d.getMonth()]}`;
 }
 
 export function monthYear(t: number, utc = false): string {
   const d = new Date(t);
   const y = utc ? d.getUTCFullYear() : d.getFullYear();
-  return `${MONTHS[utc ? d.getUTCMonth() : d.getMonth()]} '${String(y).slice(2)}`;
+  return `${months()[utc ? d.getUTCMonth() : d.getMonth()]} '${String(y).slice(2)}`;
 }
 
 export function hm(t: number): string {

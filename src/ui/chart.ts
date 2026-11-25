@@ -2,6 +2,7 @@ import { heikinAshi, type Candle, type Timeframe } from '../core/candles';
 import { dateTime, monthYear, shortDate } from '../core/format';
 import { bollinger, ema, macd, rsi, stochastic, type BandsResult, type MacdResult, type StochResult } from '../core/indicators';
 import { tradingDayDate } from '../core/time';
+import { tr } from '../core/i18n';
 
 export type ChartType = 'candles' | 'heikin' | 'line';
 export type LowerPane = 'rsi' | 'macd' | 'stoch' | 'none';
@@ -300,7 +301,7 @@ export class CandleChart {
     const n = this.bars.length;
     if (n === 0) {
       ctx.fillStyle = th.dim;
-      ctx.fillText('No data', 12, 20);
+      ctx.fillText(tr('No data'), 12, 20);
       return;
     }
     if (this.follow) this.right = n - 1 + MARGIN_BARS;
@@ -545,7 +546,7 @@ export class CandleChart {
       if (yy < pTop || yy > pBot) {
         // Off-screen: stack small arrow tags on the price axis.
         const ey = yy < pTop ? pTop + 9 + 19 * above++ : pBot - 9 - 19 * below++;
-        const short = ln.label.split(' ').slice(0, 2).join(' ');
+        const short = tr(ln.label).split(' ').slice(0, 2).join(' ');
         this.tag(plotW + 2, ey, (yy < pTop ? '▲' : '▼') + short, withAlpha(ln.color, 0.25), ln.color, AXIS_W - 4);
         continue;
       }
@@ -558,9 +559,10 @@ export class CandleChart {
       ctx.lineTo(plotW, yr);
       ctx.stroke();
       ctx.setLineDash([]);
-      const tw = ctx.measureText(ln.label).width + 12;
+      const label = tr(ln.label);
+      const tw = ctx.measureText(label).width + 12;
       // Keep labels clear of the OHLC legend in the top-left corner.
-      this.tag(yr < TOP + 44 ? plotW - tw - 8 : 6, yr, ln.label, withAlpha(ln.color, 0.18), ln.color, tw);
+      this.tag(yr < TOP + 44 ? plotW - tw - 8 : 6, yr, label, withAlpha(ln.color, 0.18), ln.color, tw);
       this.tag(plotW + 2, yr, this.fmt(ln.price), ln.color, th.void, AXIS_W - 4);
     }
 
@@ -672,7 +674,7 @@ export class CandleChart {
     if (this.overlays.ema50) put2(`EMA50 ${val(ind.ema50)}`, th.warn);
     if (this.overlays.ema200) put2(`EMA200 ${val(ind.ema200)}`, th.accent);
     if (this.overlays.bb) put2(`BB ${val(ind.bb.upper)} / ${val(ind.bb.lower)}`, th.accent);
-    if (this.type === 'heikin') put2('Heikin-Ashi bodies · OHLC shows real prices', th.faint);
+    if (this.type === 'heikin') put2(tr('Heikin-Ashi bodies · OHLC shows real prices'), th.faint);
   }
 
   private drawLower(

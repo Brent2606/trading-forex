@@ -1,3 +1,5 @@
+import { tr } from '../core/i18n';
+
 export function $<T extends HTMLElement = HTMLElement>(id: string): T {
   const el = document.getElementById(id);
   if (!el) throw new Error(`#${id} missing`);
@@ -5,7 +7,8 @@ export function $<T extends HTMLElement = HTMLElement>(id: string): T {
 }
 
 export function setText(el: HTMLElement, text: string): void {
-  if (el.textContent !== text) el.textContent = text;
+  const v = tr(text);
+  if (el.textContent !== v) el.textContent = v;
 }
 
 /** Sets text and a sign class (pos / neg). */

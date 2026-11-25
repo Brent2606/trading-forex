@@ -34,6 +34,7 @@ import { isValidSnapshot, MarketSim, sanitizeRates, type MarketSeed, type Market
 import { randomSeed } from '../src/core/rng';
 import { DAY, tradingDayKey } from '../src/core/time';
 import { channelsFromEnv, createNotifier } from './notify';
+import { setLang, trLines } from '../src/core/i18n';
 import { freshMirrorState, OandaClient, OandaMarket, OandaMirror, resolveBaseUrl, type MirrorState } from './oanda';
 import type { Candle, Timeframe } from '../src/core/candles';
 import type { MidLookup, Quote } from '../src/core/rates';
@@ -165,7 +166,8 @@ const maskId = (id: string) => id.replace(/\d(?=\d{3})/g, '•');
 async function main(): Promise<void> {
   const saved = loadSaved();
   log(`NEONFX bot starting · data ${DATA}`);
-  const notifier = createNotifier(channelsFromEnv(env), env.NEONFX_NOTIFY === 'all' ? 'all' : 'important', (m) => log(m, 'warn'));
+  if (env.NEONFX_LANG === 'nl') setLang('nl');
+  const notifier = createNotifier(channelsFromEnv(env), env.NEONFX_NOTIFY === 'all' ? 'all' : 'important', (m) => log(m, 'warn'), 1500, trLines);
   log(notifier.channels ? `Notifications: ${notifier.channels} channel(s), level ${notifier.level}` : 'Notifications: none configured (see README)');
 
   // ---- price source: OANDA practice (real prices) or the simulator

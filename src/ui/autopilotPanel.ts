@@ -4,6 +4,7 @@ import { csvDataset, marketDatasets } from '../core/datasets';
 import { duration, escapeHtml, integer, moneySigned } from '../core/format';
 import { SESSION_NAMES } from '../core/genome';
 import type { Evaluation, SegmentStats } from '../core/lab';
+import { getLang } from '../core/i18n';
 import { save } from '../core/storage';
 import { $, setText } from './dom';
 import type { App } from './context';
@@ -153,16 +154,31 @@ export function initAutopilotPanel(app: App, ap: Autopilot, lab: LabClient): Aut
   // ------------------------------------------------------------ rendering
   function note(): string {
     const s = lab.stats;
+    const nl = getLang() === 'nl';
     const parts: string[] = [];
     if (!s || s.dataKind === 'sim') {
       parts.push(
-        '<b>Simulated prices are random by design.</b> Anything the lab finds here is luck, and the live record will expose it: that is the learning loop working. For research that means something, import real broker history (Backtest tab → Import OHLC CSV) and set Lab data to it.',
+        nl
+          ? '<b>Gesimuleerde koersen zijn met opzet willekeurig.</b> Wat het lab hier vindt is geluk, en het live resultaat zal dat ontmaskeren: zo werkt de leerlus. Voor onderzoek dat iets betekent: importeer echte broker-historie (Backtest-tab → OHLC-CSV importeren) en kies die als Lab-data.'
+          : '<b>Simulated prices are random by design.</b> Anything the lab finds here is luck, and the live record will expose it: that is the learning loop working. For research that means something, import real broker history (Backtest tab → Import OHLC CSV) and set Lab data to it.',
       );
     } else {
-      parts.push(`<b>Researching real data:</b> ${escapeHtml(s.dataLabel)}. Trades still run on the simulated feed (paper money).`);
+      parts.push(
+        nl
+          ? `<b>Onderzoek op echte data:</b> ${escapeHtml(s.dataLabel)}. Trades lopen nog steeds op de gesimuleerde feed (papiergeld).`
+          : `<b>Researching real data:</b> ${escapeHtml(s.dataLabel)}. Trades still run on the simulated feed (paper money).`,
+      );
     }
-    parts.push('New strategies trade on probation at small risk and earn full risk only after 15+ profitable live trades. Losers get benched for good.');
-    parts.push('This tab must stay open for the autopilot to run; for true 24/7 run the headless bot (see README).');
+    parts.push(
+      nl
+        ? 'Nieuwe strategieën handelen op proef met klein risico en krijgen pas vol risico na 15+ winstgevende live trades. Verliezers worden definitief gebankt.'
+        : 'New strategies trade on probation at small risk and earn full risk only after 15+ profitable live trades. Losers get benched for good.',
+    );
+    parts.push(
+      nl
+        ? 'Dit tabblad moet open blijven voor de autopilot; voor echt 24/7 draai je de bot zonder browser (zie README).'
+        : 'This tab must stay open for the autopilot to run; for true 24/7 run the headless bot (see README).',
+    );
     return parts.join(' ');
   }
 

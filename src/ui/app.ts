@@ -21,6 +21,8 @@ import { initDesk } from './desk';
 import { $, pressSeg, priceHtml, setSigned, setText } from './dom';
 import { sizeOrder } from './orders';
 import { initTicket } from './ticket';
+import { detectLang, getLang, setLang, tr, type Lang } from '../core/i18n';
+import { applyLang, startTranslation } from './i18nDom';
 
 const TICK_MS = 250;
 const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
@@ -116,12 +118,16 @@ const SOUNDS: Record<SoundKind, () => void> = {
 // ---------------------------------------------------------------- boot
 
 export async function boot(): Promise<void> {
+  const savedLang = load<Lang>('lang');
+  setLang(savedLang === 'nl' || savedLang === 'en' ? savedLang : detectLang(navigator.language));
+  document.documentElement.lang = getLang();
+  startTranslation(document.body);
   const bootEl = $('boot');
   const bootLog = $('boot-log');
   let fast = reducedMotion();
   bootEl.addEventListener('click', () => (fast = true));
   const say = async (line: string) => {
-    bootLog.textContent += line + '\n';
+    bootLog.textContent += tr(line) + '\n';
     await new Promise((r) => setTimeout(r, fast ? 0 : 140));
   };
   const paint = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
@@ -325,6 +331,29 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
     'Prices come from a simulator anchored to ' +
     (market.seed.source === 'ecb' ? 'European Central Bank reference rates.' : market.seed.source === 'resumed' ? 'your last session.' : 'built-in reference rates.') +
     ' It is not a live market feed.';
+
+  // ---- language
+  const langBtn = $('lang-toggle');
+  const syncLangBtn = () => {
+    langBtn.textContent = getLang() === 'nl' ? 'NL' : 'EN';
+    langBtn.title = getLang() === 'nl' ? 'Language: Nederlands. Click for English' : 'Language: English. Click for Dutch';
+    if (getLang() === 'nl') langBtn.title = tr(langBtn.title);
+  };
+  langBtn.addEventListener('click', () => {
+    setLang(getLang() === 'nl' ? 'en' : 'nl');
+    save('lang', getLang());
+    applyLang();
+    syncLangBtn();
+    chart.refresh();
+    analysis.renderTech();
+    desk.render();
+    apPanel.render();
+    botPanel.render();
+    renderTape();
+    if (prefs.tab === 'performance') desk.renderPerformance();
+    log(getLang() === 'nl' ? 'Taal: Nederlands' : 'Language: English', 'info');
+  });
+  syncLangBtn();
 
   // ---- fx & sound toggles
   const fxBtn = $('fx-toggle');

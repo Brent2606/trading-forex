@@ -1,4 +1,5 @@
 /** Small canvas charts: balance / equity curves and the consensus gauge. */
+import { tr } from '../core/i18n';
 
 function setup(canvas: HTMLCanvasElement): { ctx: CanvasRenderingContext2D; w: number; h: number } | null {
   const r = canvas.getBoundingClientRect();
@@ -25,7 +26,7 @@ export function drawCurve(canvas: HTMLCanvasElement, values: ArrayLike<number>, 
   ctx.textBaseline = 'middle';
   if (values.length < 2) {
     ctx.fillStyle = faint;
-    ctx.fillText(emptyText, 12, h / 2);
+    ctx.fillText(tr(emptyText), 12, h / 2);
     return;
   }
   let lo = baseline;
@@ -133,7 +134,7 @@ export function drawGauge(canvas: HTMLCanvasElement, score: number): void {
     ctx.moveTo(cx + Math.cos(a) * (r - 9), cy + Math.sin(a) * (r - 9));
     ctx.lineTo(cx + Math.cos(a) * (r - 15), cy + Math.sin(a) * (r - 15));
     ctx.stroke();
-    ctx.fillText(labels[k], cx + Math.cos(a) * (r + 22), cy + Math.sin(a) * (r + 13) + 3);
+    ctx.fillText(tr(labels[k]), cx + Math.cos(a) * (r + 22), cy + Math.sin(a) * (r + 13) + 3);
   }
   const clamped = Math.max(-1, Math.min(1, score));
   const a = Math.PI + ((clamped + 1) / 2) * Math.PI;

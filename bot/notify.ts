@@ -59,6 +59,7 @@ export function createNotifier(
   level: NotifyLevel,
   log: (msg: string) => void,
   gapMs = 1500,
+  transform: (text: string) => string = (t) => t,
 ): Notifier {
   const queue: { text: string; event: string }[] = [];
   let busy: Promise<void> | null = null;
@@ -101,7 +102,8 @@ export function createNotifier(
     level,
     send(text, event, important) {
       if (!channels.length || (!important && level !== 'all')) return;
-      queue.push({ text: text.length > MAX_LEN ? text.slice(0, MAX_LEN - 1) + '…' : text, event });
+      const out = transform(text);
+      queue.push({ text: out.length > MAX_LEN ? out.slice(0, MAX_LEN - 1) + '…' : out, event });
       if (queue.length > 50) queue.splice(0, queue.length - 50);
       if (!busy) busy = drain().finally(() => (busy = null));
     },

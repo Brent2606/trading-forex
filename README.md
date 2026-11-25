@@ -99,11 +99,53 @@ npm run bot:docker          # = npm run bot:build && docker compose up -d --buil
 * Statuspagina: http://127.0.0.1:8787/ (JSON op `/status`). Alleen-lezen, en standaard
   alleen bereikbaar op die machine. Gebruik een VPN of SSH-tunnel om hem van buitenaf te
   bekijken; zet de poort niet open naar internet.
+* De gesimuleerde markt (koershistorie en prijzen) wordt elk uur en bij afsluiten opgeslagen
+  in `data/neonfx-market.json.gz`. Na een herstart simuleert de bot de tijd dat hij uit stond,
+  inclusief stops en targets, zodat alles doorloopt.
 * Echte data: zet CSV-exports (MetaTrader, Dukascopy, HistData, TradingView) in
   `data/history/`. Het lab onderzoekt dan op echte koersen in plaats van de simulator.
 * Logboek: `data/neonfx.log`. Toestand: `data/neonfx-state.json`.
 * De statuspagina toont ook een equity-grafiek (één punt per uur).
 * Net als de echte markt ligt de bot stil van vrijdag 17:00 tot zondag 17:00 New Yorkse tijd.
+* Meldingen in het Nederlands: `NEONFX_LANG=nl`.
+
+### De terminal aan de bot koppelen
+
+Open de terminal op een computer die de bot kan bereiken (dezelfde machine, of via VPN/SSH-tunnel)
+met `npm run dev` en ga naar het tabblad **24/7-bot**. Vul het adres in (standaard
+`http://127.0.0.1:8787`) en het token uit `data/neonfx-token.txt` (wordt bij de eerste start
+aangemaakt; of zet je eigen `NEONFX_TOKEN`). Je ziet dan equity-grafiek, posities, recente trades,
+strategieën, lessen, het lab en het log, en je kunt de autopilot en het lab van de bot aan- en
+uitzetten. De API (`/api/status`, `/api/control`) werkt alleen met het token. De gepubliceerde
+https-pagina kan geen gewone http-verbinding met je bot maken; gebruik daarvoor de lokale terminal.
+
+### Echte koersen via OANDA (demo-account)
+
+Maak een gratis **practice**-account bij OANDA, genereer een API-token (Manage API Access) en zet:
+
+```
+NEONFX_OANDA_TOKEN=<je practice-token>
+NEONFX_OANDA_ACCOUNT=<optioneel, anders de eerste rekening>
+NEONFX_OANDA_TRADE=off        # "on" = trades ook op je demo-account plaatsen
+NEONFX_OANDA_MAX_UNITS=100000 # grootste order (1 lot)
+```
+
+* Met alleen het token draait de bot op **echte koersen** (elke seconde) en echte koershistorie
+  (~5000 uur-candles per paar). Het lab onderzoekt dan echte data en de papieren rekening handelt
+  op echte prijzen.
+* Met `NEONFX_OANDA_TRADE=on` worden de trades van de bot gespiegeld naar je demo-account: grootte
+  geschaald naar je demosaldo, met stop en target die meelopen (trailing, break-even, wijzigingen).
+* Alleen de demo-server (`api-fxpractice.oanda.com`) is toegestaan. Echte-geld-rekeningen worden
+  bewust geweigerd. Werkt OANDA niet (verkeerd token, geen verbinding), dan valt de bot terug op de
+  simulator en krijg je een melding.
+* Getest tegen een nagebootste OANDA-API volgens de officiële v20-documentatie; test het eerst
+  een paar dagen op je demo-account.
+
+### Taal
+
+De terminal volgt de taal van je browser (Nederlands of Engels). Met de knop **NL/EN** rechtsboven
+wissel je direct. Gangbare handelstermen (stop loss, take profit, spread, pips, lots) blijven zoals
+Nederlandse traders ze gebruiken.
 
 ### Meldingen op je telefoon
 
@@ -180,14 +222,26 @@ src/core/       pure, tested logic
   analytics.ts    currency strength, correlation
   csv.ts          OHLC import for common broker formats
   command.ts      command-line parser
+  i18n.ts         Dutch translation (dictionary + message patterns)
   time.ts         FX market hours, New York close, sessions
 src/ui/         DOM + canvas UI (chart, ticket, desk, analysis, backtest, autopilot)
-bot/            the headless 24/7 bot (Node) with a read-only status page
+bot/            the headless 24/7 bot (Node): API, notifications, OANDA practice integration
 tests/          vitest suites for everything in src/core
 ```
 
+## Broker connection (OANDA practice) and remote view
+
+* `NEONFX_OANDA_TOKEN` switches the bot from the simulator to OANDA's real prices and candle
+  history; `NEONFX_OANDA_TRADE=on` mirrors its trades to the practice account (units scaled to
+  the account's NAV, stops and targets attached and kept in sync). Only the practice API is
+  allowed; real-money accounts are refused on purpose. See `bot/oanda.ts`.
+* The terminal's **24/7 Bot** tab shows the bot through its token-protected API
+  (`/api/status`, `/api/control`) and can switch its autopilot and lab.
+* The simulated market of the bot is saved hourly and restored after a restart, so history and
+  prices continue.
+
 ## Going live
 
-Wiring this to a real broker (for example a REST/streaming API with a practice account)
-means replacing `MarketSim` as the quote source and `TradingEngine.submit/close/modify`
-with broker calls. Do that against a demo account first, and keep the risk guard on.
+Real-money trading is deliberately not supported. Run on a practice account for a long time,
+keep the risk guard on, and remember that a strategy that worked on history or on a demo is
+still not a guarantee.

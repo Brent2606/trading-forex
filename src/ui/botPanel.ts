@@ -1,6 +1,7 @@
 import type { BotControl, BotStatus } from '../core/botTypes';
 import { clock, dateTime, escapeHtml, lots as fmtLots, money, moneySigned, pct } from '../core/format';
 import { displaySymbol } from '../core/instruments';
+import { getLang } from '../core/i18n';
 import { load, save } from '../core/storage';
 import { $, setText } from './dom';
 import type { App } from './context';
@@ -36,12 +37,17 @@ export function initBotPanel(app: App): { render(): void } {
 
   function note(): void {
     const page = location.protocol;
+    const nl = getLang() === 'nl';
     const parts = [
-      'Shows the headless 24/7 bot (<code>npm run bot</code> or Docker) and lets you switch its autopilot and lab. The token is in <code>data/neonfx-token.txt</code> on the bot machine and is stored in this browser after connecting.',
+      nl
+        ? 'Toont de 24/7-bot zonder browser (<code>npm run bot</code> of Docker) en laat je de autopilot en het lab ervan aan- en uitzetten. Het token staat in <code>data/neonfx-token.txt</code> op de bot-machine en wordt na verbinden in deze browser bewaard.'
+        : 'Shows the headless 24/7 bot (<code>npm run bot</code> or Docker) and lets you switch its autopilot and lab. The token is in <code>data/neonfx-token.txt</code> on the bot machine and is stored in this browser after connecting.',
     ];
     if (page === 'https:' && base().startsWith('http:')) {
       parts.unshift(
-        '<b>This page is served over https, so the browser will block a plain http connection to the bot.</b> Open the terminal from the bot machine instead (<code>npm run dev</code>, then http://localhost:5173), or put the bot behind https.',
+        nl
+          ? '<b>Deze pagina draait via https, dus de browser blokkeert een gewone http-verbinding met de bot.</b> Open de terminal op de bot-machine (<code>npm run dev</code>, dan http://localhost:5173), of zet de bot achter https.'
+          : '<b>This page is served over https, so the browser will block a plain http connection to the bot.</b> Open the terminal from the bot machine instead (<code>npm run dev</code>, then http://localhost:5173), or put the bot behind https.',
       );
     }
     $('bot-note').innerHTML = parts.join(' ');
@@ -140,6 +146,7 @@ export function initBotPanel(app: App): { render(): void } {
   labIn.addEventListener('change', () => void control({ lab: labIn.checked }));
 
   function render(): void {
+    note();
     const s = last;
     if (!s) return;
     view.hidden = false;
