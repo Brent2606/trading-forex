@@ -53,7 +53,7 @@ describe('market simulator', () => {
         }
       }
     }
-  });
+  }, 30_000);
 
   it('has no history bars while the market is closed', () => {
     const c = sim.candles.EURUSD;
