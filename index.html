@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>NEONFX Terminal</title>
+    <meta name="claude:viewport-fit-sides" content="cover" />
+    <meta name="description" content="Neon forex paper-trading terminal: live simulated feed, charts, risk management, backtesting and analytics." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Monoton&display=swap"
+    />
+  </head>
+  <body>
+    <div class="floor" aria-hidden="true"></div>
+    <div class="boot" id="boot" role="status" aria-live="polite">
+      <div class="boot-inner">
+        <div class="logo boot-logo" data-text="NEONFX">NEONFX</div>
+        <pre class="boot-log" id="boot-log"></pre>
+        <div class="boot-hint">click to skip</div>
+      </div>
+    </div>
+
+    <div class="app" id="app">
+      <!-- ============================== TOP BAR ============================== -->
+      <header class="top">
+        <div class="brand">
+          <span class="logo" data-text="NEONFX">NEONFX</span>
+          <span class="brand-sub">FX PAPER-TRADING TERMINAL</span>
+        </div>
+        <div class="acct" id="acct">
+          <div class="stat"><span class="k">Balance</span><span class="v" id="m-balance">—</span></div>
+          <div class="stat"><span class="k">Equity</span><span class="v big" id="m-equity">—</span></div>
+          <div class="stat"><span class="k">Floating P/L</span><span class="v" id="m-floating">—</span></div>
+          <div class="stat"><span class="k">Day P/L</span><span class="v" id="m-day">—</span></div>
+          <div class="stat"><span class="k">Margin</span><span class="v" id="m-margin">—</span></div>
+          <div class="stat"><span class="k">Free margin</span><span class="v" id="m-free">—</span></div>
+          <div class="stat"><span class="k">Margin level</span><span class="v" id="m-level">—</span></div>
+        </div>
+        <div class="status">
+          <span class="chip" id="feed-chip" title="Price source">SIM FEED</span>
+          <span class="chip" id="guard-chip" title="Risk guard status">GUARD</span>
+          <span class="clock" id="clock" title="Your local time, and UTC">--:--:--</span>
+          <button class="iconbtn" id="fx-toggle" type="button" aria-pressed="true" title="Toggle glow and scanline effects">FX</button>
+          <button class="iconbtn" id="sound-toggle" type="button" aria-pressed="true" title="Toggle sounds">SND</button>
+        </div>
+      </header>
+
+      <!-- ============================== TICKER TAPE ============================== -->
+      <div class="tape" aria-hidden="true"><div class="tape-track" id="tape-track"></div></div>
+
+      <!-- ============================== MARKET WATCH ============================== -->
+      <section class="panel watch" aria-label="Market watch">
+        <div class="ph">Market watch <span class="ph-note" id="watch-note">bid · ask · spread · day</span></div>
+        <div class="scroll">
+          <table class="tbl watch-tbl">
+            <thead>
+              <tr><th>Pair</th><th class="r">Bid</th><th class="r">Ask</th><th class="r">Spr</th><th class="r">Day</th></tr>
+            </thead>
+            <tbody id="watch-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ============================== CHART ============================== -->
+      <section class="panel chartp" aria-label="Chart">
+        <div class="ph chart-tools">
+          <select id="chart-symbol" class="sel" aria-label="Chart pair"></select>
+          <div class="seg" id="tf-seg" role="group" aria-label="Timeframe"></div>
+          <div class="seg" id="type-seg" role="group" aria-label="Chart type">
+            <button type="button" data-v="candles">Candles</button>
+            <button type="button" data-v="heikin">H-Ashi</button>
+            <button type="button" data-v="line">Line</button>
+          </div>
+          <div class="seg" id="ov-seg" role="group" aria-label="Overlays">
+            <button type="button" data-v="ema20" class="c-cyan">EMA20</button>
+            <button type="button" data-v="ema50" class="c-warn">EMA50</button>
+            <button type="button" data-v="ema200" class="c-accent">EMA200</button>
+            <button type="button" data-v="bb">BB</button>
+            <button type="button" data-v="volume">VOL</button>
+          </div>
+          <select id="lower-sel" class="sel" aria-label="Lower indicator">
+            <option value="rsi">RSI 14</option>
+            <option value="macd">MACD</option>
+            <option value="stoch">Stoch</option>
+            <option value="none">No pane</option>
+          </select>
+          <div class="seg">
+            <button type="button" id="zoom-out" title="Zoom out" aria-label="Zoom out">−</button>
+            <button type="button" id="zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
+            <button type="button" id="go-live" title="Jump to the latest bar" aria-label="Jump to the latest bar">LIVE</button>
+          </div>
+          <span class="ph-note" id="chart-note"></span>
+        </div>
+        <div class="chart-wrap" id="chart-wrap"><canvas id="chart" aria-label="Price chart" title="Drag to pan · wheel to zoom · double-click to return to live"></canvas></div>
+      </section>
+
+      <!-- ============================== RIGHT RAIL ============================== -->
+      <aside class="rail">
+        <section class="panel ticket" aria-label="Order ticket">
+          <div class="ph">Order ticket <span class="ph-note" id="tk-pair">EUR/USD</span></div>
+          <div class="tk-body">
+            <div class="seg wide" id="tk-type" role="group" aria-label="Order type">
+              <button type="button" data-v="market">Market</button>
+              <button type="button" data-v="limit">Limit</button>
+              <button type="button" data-v="stop">Stop</button>
+            </div>
+            <div class="tk-row" id="tk-price-row" hidden>
+              <label for="tk-price">Entry price</label>
+              <div class="inl">
+                <input id="tk-price" type="number" step="any" inputmode="decimal" />
+                <button type="button" class="mini" id="tk-price-fill" title="Use the current price">MKT</button>
+              </div>
+            </div>
+            <div class="trade-btns">
+              <button type="button" class="tbtn sell" id="tk-sell">
+                <span class="tlabel" id="tk-sell-label">SELL</span>
+                <span class="tpx" id="tk-bid">—</span>
+              </button>
+              <div class="spread-pill"><span id="tk-spread">—</span><small>spread</small></div>
+              <button type="button" class="tbtn buy" id="tk-buy">
+                <span class="tlabel" id="tk-buy-label">BUY</span>
+                <span class="tpx" id="tk-ask">—</span>
+              </button>
+            </div>
+            <div class="confirm" id="tk-confirm" hidden>
+              <span id="tk-confirm-text"></span>
+              <div class="inl">
+                <button type="button" class="btn ok" id="tk-confirm-yes">Confirm</button>
+                <button type="button" class="btn" id="tk-confirm-no">Cancel</button>
+              </div>
+            </div>
+            <div class="tk-grid">
+              <div class="tk-row">
+                <label for="tk-size">Size</label>
+                <div class="inl">
+                  <div class="seg" id="tk-mode" role="group" aria-label="Size mode">
+                    <button type="button" data-v="risk">Risk %</button>
+                    <button type="button" data-v="lots">Lots</button>
+                  </div>
+                  <input id="tk-size" type="number" step="0.01" min="0.01" inputmode="decimal" />
+                </div>
+              </div>
+              <div class="tk-row">
+                <label for="tk-sl">Stop, pips</label>
+                <div class="inl">
+                  <input id="tk-sl" type="number" step="0.1" min="0" inputmode="decimal" />
+                  <button type="button" class="mini" id="tk-atr" title="Set the stop to 1.5 × ATR(14) of the chart timeframe">ATR</button>
+                </div>
+              </div>
+              <div class="tk-row">
+                <label for="tk-tp">Target, pips</label>
+                <div class="inl">
+                  <input id="tk-tp" type="number" step="0.1" min="0" inputmode="decimal" />
+                  <div class="seg" id="tk-rr" role="group" aria-label="Set target as a multiple of the stop">
+                    <button type="button" data-v="1">1R</button>
+                    <button type="button" data-v="2">2R</button>
+                    <button type="button" data-v="3">3R</button>
+                  </div>
+                </div>
+              </div>
+              <div class="tk-row">
+                <label for="tk-trail-on"><input type="checkbox" id="tk-trail-on" /> Trailing</label>
+                <input id="tk-trail" type="number" step="0.1" min="0" inputmode="decimal" />
+              </div>
+            </div>
+            <dl class="preview" id="tk-preview"></dl>
+            <div class="tk-warn" id="tk-warn" aria-live="polite"></div>
+            <label class="check"><input type="checkbox" id="tk-confirm-on" /> Confirm before sending orders</label>
+          </div>
+        </section>
+
+        <section class="panel tech" aria-label="Technical summary">
+          <div class="ph">Technical pulse <span class="ph-note" id="tech-note">EUR/USD · H1</span></div>
+          <div class="tech-body">
+            <canvas id="gauge" width="240" height="120" aria-label="Indicator consensus gauge"></canvas>
+            <div class="verdict" id="tech-verdict">—</div>
+            <div class="tech-counts" id="tech-counts"></div>
+            <details class="tech-details">
+              <summary>All 17 readings</summary>
+              <table class="tbl" id="tech-table"></table>
+            </details>
+            <p class="fine">Indicator consensus describes the chart right now. It is not a forecast.</p>
+          </div>
+        </section>
+      </aside>
+
+      <!-- ============================== SESSIONS / STRENGTH ============================== -->
+      <section class="panel side" aria-label="Sessions and currency strength">
+        <div class="ph">Sessions <span class="ph-note" id="mkt-status">—</span></div>
+        <div class="sessions" id="sessions"></div>
+        <div class="ph sub">
+          Currency strength
+          <select id="str-lb" class="sel sm" aria-label="Strength lookback">
+            <option value="4">4h</option>
+            <option value="24" selected>24h</option>
+            <option value="120">1w</option>
+          </select>
+        </div>
+        <div class="strength" id="strength"></div>
+      </section>
+
+      <!-- ============================== DOCK ============================== -->
+      <section class="panel dock" aria-label="Trading desk">
+        <div class="tabs" role="tablist" id="tabs">
+          <button type="button" role="tab" data-tab="positions">Positions <b id="cnt-pos">0</b></button>
+          <button type="button" role="tab" data-tab="orders">Orders <b id="cnt-ord">0</b></button>
+          <button type="button" role="tab" data-tab="history">History</button>
+          <button type="button" role="tab" data-tab="performance">Performance</button>
+          <button type="button" role="tab" data-tab="backtest">Backtest</button>
+          <button type="button" role="tab" data-tab="scanner">Scanner</button>
+          <button type="button" role="tab" data-tab="correlation">Correlation</button>
+          <button type="button" role="tab" data-tab="alerts">Alerts <b id="cnt-al">0</b></button>
+          <button type="button" role="tab" data-tab="risk">Risk &amp; account</button>
+        </div>
+
+        <div class="tabpane" data-pane="positions">
+          <div class="pane-tools">
+            <button type="button" class="btn" data-close="all">Close all</button>
+            <button type="button" class="btn" data-close="winners">Close winners</button>
+            <button type="button" class="btn" data-close="losers">Close losers</button>
+            <span class="ph-note" id="pos-total"></span>
+          </div>
+          <div class="scroll x">
+            <table class="tbl">
+              <thead>
+                <tr>
+                  <th>#</th><th>Pair</th><th>Side</th><th class="r">Lots</th><th class="r">Entry</th><th class="r">Price</th>
+                  <th class="r">S/L</th><th class="r">T/P</th><th class="r">Pips</th><th class="r">P/L</th><th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="pos-body"></tbody>
+            </table>
+            <p class="empty" id="pos-empty">No open positions. Use the order ticket, Shift+B / Shift+S, or type <code>buy eurusd</code> below.</p>
+          </div>
+        </div>
+
+        <div class="tabpane" data-pane="orders" hidden>
+          <div class="scroll x">
+            <table class="tbl">
+              <thead>
+                <tr>
+                  <th>#</th><th>Pair</th><th>Type</th><th class="r">Lots</th><th class="r">Price</th><th class="r">Distance</th>
+                  <th class="r">S/L</th><th class="r">T/P</th><th>Placed</th><th></th>
+                </tr>
+              </thead>
+              <tbody id="ord-body"></tbody>
+            </table>
+            <p class="empty" id="ord-empty">No pending orders. Switch the ticket to Limit or Stop to place one.</p>
+          </div>
+        </div>
+
+        <div class="tabpane" data-pane="history" hidden>
+          <div class="pane-tools">
+            <button type="button" class="btn" id="hist-copy">Copy as CSV</button>
+            <span class="ph-note" id="hist-note"></span>
+          </div>
+          <div class="scroll x">
+            <table class="tbl">
+              <thead>
+                <tr>
+                  <th>Closed</th><th>#</th><th>Pair</th><th>Side</th><th class="r">Lots</th><th class="r">Entry</th><th class="r">Exit</th>
+                  <th class="r">Pips</th><th class="r">Net</th><th class="r">R</th><th>Reason</th>
+                </tr>
+              </thead>
+              <tbody id="hist-body"></tbody>
+            </table>
+            <p class="empty" id="hist-empty">Closed trades appear here.</p>
+          </div>
+          <textarea class="copybox" id="hist-copybox" readonly hidden aria-label="Trade history CSV"></textarea>
+        </div>
+
+        <div class="tabpane" data-pane="performance" hidden>
+          <div class="perf">
+            <div class="tiles" id="perf-tiles"></div>
+            <div class="perf-chart">
+              <div class="mini-h">Balance curve (closed trades)</div>
+              <canvas id="perf-curve" aria-label="Balance curve"></canvas>
+            </div>
+            <div class="perf-side">
+              <div class="mini-h">By pair</div>
+              <table class="tbl" id="perf-pairs"></table>
+            </div>
+          </div>
+        </div>
+
+        <div class="tabpane" data-pane="backtest" hidden>
+          <div class="bt">
+            <form class="bt-form" id="bt-form">
+              <div class="bt-grid">
+                <label>Strategy <select id="bt-strategy" class="sel"></select></label>
+                <label>Data
+                  <select id="bt-source" class="sel">
+                    <option value="chart">Chart pair (simulated)</option>
+                    <option value="csv" disabled>Imported CSV</option>
+                  </select>
+                </label>
+                <label>Timeframe
+                  <select id="bt-tf" class="sel">
+                    <option>M1</option><option>M5</option><option>M15</option><option selected>H1</option><option>H4</option><option>D1</option>
+                  </select>
+                </label>
+                <div class="bt-params" id="bt-params"></div>
+                <label>Risk / trade % <input id="bt-risk" type="number" step="0.1" min="0.1" value="1" /></label>
+                <label>Stop × ATR <input id="bt-sl" type="number" step="0.1" min="0" value="2" /></label>
+                <label>Target × ATR <input id="bt-tp" type="number" step="0.1" min="0" value="3" /></label>
+                <label>Trend EMA (0=off) <input id="bt-trend" type="number" step="1" min="0" value="0" /></label>
+                <label>Lots if no stop <input id="bt-lots" type="number" step="0.01" min="0.01" value="0.1" /></label>
+                <label class="check"><input type="checkbox" id="bt-opp" checked /> Exit on opposite signal</label>
+                <label class="check"><input type="checkbox" id="bt-long" checked /> Longs</label>
+                <label class="check"><input type="checkbox" id="bt-short" checked /> Shorts</label>
+              </div>
+              <p class="fine" id="bt-blurb"></p>
+              <div class="inl">
+                <button type="submit" class="btn ok">Run backtest</button>
+                <label class="btn file">Import OHLC CSV <input type="file" id="bt-file" accept=".csv,.txt,text/csv,text/plain" /></label>
+                <button type="button" class="btn" id="bt-clear-marks">Clear chart marks</button>
+              </div>
+              <p class="fine" id="bt-csv-info">Import MetaTrader 4/5, Dukascopy, HistData or TradingView exports to test on real market data.</p>
+            </form>
+            <div class="bt-out" id="bt-out">
+              <div class="tiles" id="bt-tiles"></div>
+              <canvas id="bt-curve" aria-label="Backtest equity curve"></canvas>
+              <p class="fine warnline" id="bt-note"></p>
+            </div>
+          </div>
+        </div>
+
+        <div class="tabpane" data-pane="scanner" hidden>
+          <div class="scroll x">
+            <table class="tbl scan" id="scan-table"></table>
+          </div>
+          <p class="fine">Click a cell to open that pair and timeframe. Verdicts use the same 17-indicator consensus as the Technical pulse.</p>
+        </div>
+
+        <div class="tabpane" data-pane="correlation" hidden>
+          <div class="pane-tools">
+            <label>Timeframe
+              <select id="cor-tf" class="sel sm"><option>H1</option><option selected>H4</option><option>D1</option></select>
+            </label>
+            <label>Bars
+              <select id="cor-n" class="sel sm"><option>50</option><option selected>120</option><option>240</option></select>
+            </label>
+            <span class="ph-note">Pearson correlation of bar returns. Highly correlated pairs stack the same risk.</span>
+          </div>
+          <div class="scroll x"><table class="heat" id="cor-table"></table></div>
+        </div>
+
+        <div class="tabpane" data-pane="alerts" hidden>
+          <form class="pane-tools" id="al-form">
+            <select id="al-symbol" class="sel sm" aria-label="Alert pair"></select>
+            <select id="al-cond" class="sel sm" aria-label="Alert condition">
+              <option value="auto">auto</option>
+              <option value="above">bid ≥</option>
+              <option value="below">bid ≤</option>
+            </select>
+            <input id="al-price" type="number" step="any" placeholder="price" aria-label="Alert price" />
+            <button type="submit" class="btn ok">Add alert</button>
+          </form>
+          <div class="scroll x">
+            <table class="tbl">
+              <thead><tr><th>Pair</th><th>Condition</th><th class="r">Price</th><th class="r">Distance</th><th>Status</th><th></th></tr></thead>
+              <tbody id="al-body"></tbody>
+            </table>
+            <p class="empty" id="al-empty">No alerts. Alerts show on the chart as violet lines and beep when hit.</p>
+          </div>
+        </div>
+
+        <div class="tabpane" data-pane="risk" hidden>
+          <div class="risk">
+            <form class="riskcol" id="guard-form">
+              <div class="mini-h">Risk guard</div>
+              <label class="check"><input type="checkbox" id="g-enabled" /> Guard enabled</label>
+              <label class="check"><input type="checkbox" id="g-sl" /> Require a stop loss on every trade</label>
+              <label>Max risk per trade (% equity) <input id="g-risk" type="number" step="0.1" min="0" /></label>
+              <label>Daily loss limit (% of day-start equity, 0 = off) <input id="g-daily" type="number" step="0.5" min="0" /></label>
+              <label>Max open positions + orders <input id="g-max" type="number" step="1" min="1" /></label>
+              <label class="check"><input type="checkbox" id="g-flatten" /> Close everything when the daily limit hits</label>
+              <div class="guard-status" id="guard-status"></div>
+            </form>
+            <form class="riskcol" id="acct-form">
+              <div class="mini-h">Paper account</div>
+              <label>Leverage
+                <select id="a-lev" class="sel">
+                  <option value="10">1:10</option><option value="20">1:20</option><option value="30">1:30</option>
+                  <option value="50">1:50</option><option value="100">1:100</option><option value="200">1:200</option>
+                  <option value="500">1:500</option>
+                </select>
+              </label>
+              <label>Commission per lot per side ($) <input id="a-comm" type="number" step="0.5" min="0" /></label>
+              <label>Starting balance ($) <input id="a-start" type="number" step="100" min="100" /></label>
+              <p class="fine">Stop-out closes the biggest loser when margin level falls below 50%. A margin-call warning shows below 100%.</p>
+              <div class="inl">
+                <button type="button" class="btn danger" id="a-reset">Reset account</button>
+                <span class="confirm-inline" id="a-reset-confirm" hidden>
+                  Wipe positions and history?
+                  <button type="button" class="btn danger" id="a-reset-yes">Yes, reset</button>
+                  <button type="button" class="btn" id="a-reset-no">No</button>
+                </span>
+              </div>
+            </form>
+            <div class="riskcol">
+              <div class="mini-h">Rules that keep accounts alive</div>
+              <ol class="rules">
+                <li>Risk 0.5–1% per trade. Ten straight losses then cost about 10%, not the account.</li>
+                <li>Decide the stop before the entry. Size comes from the stop, not the other way around.</li>
+                <li>Aim for at least 1.5R. A 40% win rate at 2R is profitable; 60% at 0.5R is not.</li>
+                <li>Correlated pairs are one bet. Long EUR/USD and long GBP/USD doubles your USD exposure.</li>
+                <li>Spreads widen at the 17:00 New York rollover and on news. Avoid tight stops then.</li>
+                <li>Backtest on real data, then paper trade, then go small. Results here are simulated.</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================== COMMAND LINE ============================== -->
+      <footer class="cmd">
+        <div class="cmd-log" id="cmd-log" aria-live="polite"></div>
+        <form class="cmd-line" id="cmd-form" autocomplete="off">
+          <label for="cmd-input" class="prompt">NEONFX&gt;</label>
+          <input id="cmd-input" type="text" spellcheck="false" autocapitalize="off" placeholder="buy eurusd 1% sl 20 tp 40 · close all · chart gbpjpy h4 · help   (press / to focus)" />
+        </form>
+      </footer>
+    </div>
+
+    <div class="toasts" id="toasts" aria-live="assertive"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
