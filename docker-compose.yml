@@ -1,0 +1,31 @@
+services:
+  neonfx-bot:
+    build: .
+    container_name: neonfx-bot
+    restart: unless-stopped
+    # Status page only on this machine. Use a VPN or SSH tunnel to view it remotely.
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - ./data:/app/data
+    environment:
+      NEONFX_AUTO: "on"
+      NEONFX_LAB: "on"
+      NEONFX_MODE: "explore"
+      NEONFX_RISK: "0.5"
+      NEONFX_TF: "H1"
+      NEONFX_LAB_DUTY: "1"
+      NEONFX_LANG: "nl"                    # notifications in Dutch ("en" for English)
+      # Notifications (see README). Keep tokens out of git, e.g. in a .env file next to this one.
+      # NEONFX_NOTIFY: "important"          # or "all" to also get every fill and close
+      # NEONFX_TELEGRAM_TOKEN: "${NEONFX_TELEGRAM_TOKEN}"
+      # NEONFX_TELEGRAM_CHAT: "${NEONFX_TELEGRAM_CHAT}"
+      # NEONFX_NTFY_URL: "https://ntfy.sh/your-long-random-topic"
+      # NEONFX_DISCORD_WEBHOOK: "${NEONFX_DISCORD_WEBHOOK}"
+      # Real prices from an OANDA practice (demo) account. Real-money accounts are not supported.
+      # NEONFX_OANDA_TOKEN: "${NEONFX_OANDA_TOKEN}"
+      # NEONFX_OANDA_ACCOUNT: ""             # optional, default: first account of the token
+      # NEONFX_OANDA_TRADE: "off"            # "on" copies the bot's trades to the practice account
+      # NEONFX_OANDA_MAX_UNITS: "100000"
+      # Terminal access token (default: generated in data/neonfx-token.txt)
+      # NEONFX_TOKEN: "${NEONFX_TOKEN}"
