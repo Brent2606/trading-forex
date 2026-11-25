@@ -5,7 +5,7 @@ import { tradingDayKey } from './time';
 
 export type Side = 'buy' | 'sell';
 export type OrderType = 'market' | 'limit' | 'stop';
-export type CloseReason = 'manual' | 'sl' | 'tp' | 'trail' | 'stopout' | 'guard' | 'reverse';
+export type CloseReason = 'manual' | 'sl' | 'tp' | 'trail' | 'stopout' | 'guard' | 'reverse' | 'signal';
 
 export interface Position {
   id: number;

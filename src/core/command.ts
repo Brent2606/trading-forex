@@ -24,6 +24,8 @@ export type Command =
   | { kind: 'alert'; symbol?: string; cond?: 'above' | 'below'; price: number }
   | { kind: 'risk'; pct: number }
   | { kind: 'reset'; confirmed: boolean; balance?: number }
+  | { kind: 'auto'; on?: boolean }
+  | { kind: 'lab'; on?: boolean }
   | { kind: 'help' }
   | { kind: 'clear' }
   | { kind: 'error'; message: string };
@@ -42,6 +44,8 @@ export const HELP_LINES: readonly string[] = [
   'alert eurusd > 1.0850            price alert (> or <, or omit to auto-detect)',
   'risk 1.5                         set ticket risk to 1.5% of equity',
   'reset confirm | reset 25000 confirm   reset the paper account',
+  'auto on | auto off | auto        autopilot: trade the lab\'s strategies automatically',
+  'lab on | lab off | lab           strategy lab: search for better strategies non-stop',
   'clear | help',
 ];
 
@@ -150,6 +154,14 @@ export function parseCommand(input: string): Command {
       const v = num(tokens[0]?.replace('%', ''));
       if (v === undefined || v <= 0 || v > 100) return err('risk <percent>, e.g. "risk 1"');
       return { kind: 'risk', pct: v };
+    }
+    case 'auto':
+    case 'autopilot':
+    case 'lab': {
+      const a = tokens[0];
+      const on = a === 'on' || a === 'start' ? true : a === 'off' || a === 'stop' ? false : undefined;
+      if (a !== undefined && on === undefined) return err(`${head} on | off`);
+      return head === 'lab' ? { kind: 'lab', on } : { kind: 'auto', on };
     }
     case 'reset': {
       let balance: number | undefined;

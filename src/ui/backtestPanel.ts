@@ -3,6 +3,7 @@ import { TIMEFRAMES, type Timeframe } from '../core/candles';
 import { parseCsv } from '../core/csv';
 import { escapeHtml, integer, money, moneySigned, pct, ratio } from '../core/format';
 import { ACCOUNT_CCY, displaySymbol, findInstrument, getInstrument } from '../core/instruments';
+import { LAB_STOP_SLIP_ATR } from '../core/lab';
 import { convert } from '../core/rates';
 import { $, setText } from './dom';
 import type { App } from './context';
@@ -122,6 +123,7 @@ export function initBacktest(app: App): { onChartChange(): void } {
       trendFilter: Math.round(n('bt-trend', 0)),
       leverage: settings.leverage,
       quoteToUsd,
+      stopSlipAtr: LAB_STOP_SLIP_ATR,
     });
     const ms = performance.now() - t0;
     const s = r.stats;
@@ -144,7 +146,7 @@ export function initBacktest(app: App): { onChartChange(): void } {
     const lowSample = s.trades < 30 ? `Only ${s.trades} trades: too few to trust. ` : '';
     setText(
       $('bt-note'),
-      `${strategy.name} on ${describeSource()} · ${integer(candles.length)} bars in ${ms.toFixed(0)} ms. ${lowSample}${note}Entries fill at the next bar's open with spread and commission; stops are assumed hit before targets inside a bar.`,
+      `${strategy.name} on ${describeSource()} · ${integer(candles.length)} bars in ${ms.toFixed(0)} ms. ${lowSample}${note}Entries fill at the next bar's open with spread and commission; stops fill ${LAB_STOP_SLIP_ATR}×ATR past the stop price (slippage) and are assumed hit before targets inside a bar.`,
     );
     const th = getComputedStyle(document.documentElement);
     const up = th.getPropertyValue('--up').trim() || '#00f0b5';

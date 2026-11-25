@@ -245,6 +245,11 @@ describe('command line', () => {
     expect(parseCommand('risk 1.5%')).toEqual({ kind: 'risk', pct: 1.5 });
     expect(parseCommand('reset')).toEqual({ kind: 'reset', confirmed: false, balance: undefined });
     expect(parseCommand('reset 25,000 confirm')).toEqual({ kind: 'reset', confirmed: true, balance: 25_000 });
+    expect(parseCommand('auto on')).toEqual({ kind: 'auto', on: true });
+    expect(parseCommand('autopilot off')).toEqual({ kind: 'auto', on: false });
+    expect(parseCommand('auto')).toEqual({ kind: 'auto', on: undefined });
+    expect(parseCommand('lab stop')).toEqual({ kind: 'lab', on: false });
+    expect(parseCommand('lab maybe').kind).toBe('error');
     expect(parseCommand('nonsense').kind).toBe('error');
     expect(parseCommand('').kind).toBe('error');
   });

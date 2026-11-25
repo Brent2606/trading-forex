@@ -16,7 +16,8 @@ performance analytics.
 ```bash
 npm install
 npm run dev        # http://localhost:5173
-npm test           # 118 unit tests
+npm test           # unit tests
+npm run bot        # the headless 24/7 bot (see below)
 npm run build      # production build in dist/
 npm run build:single   # one self-contained HTML file in dist-single/
 ```
@@ -38,12 +39,71 @@ Requires Node 20+. No runtime dependencies; everything is TypeScript + Canvas.
 | **Technical pulse & scanner** | A 17-indicator consensus gauge (10 moving averages + RSI, Stochastic, MACD, CCI, ADX, Williams %R, Momentum) for the chart, and a heat grid of every pair on M15/H1/H4/D1. It describes the chart; it is not a forecast. |
 | **Sessions, strength, correlation** | Sydney/Tokyo/London/New York sessions from the real time-zone database (DST-correct), with overlaps; a currency-strength meter; a correlation heatmap so you can see when two trades are really one bet. |
 | **Alerts** | Price alerts with sound, drawn on the chart. |
-| **Command line** | `buy eurusd 1% sl 20 tp 40`, `sell limit gbpjpy 0.5 @187.20 sl 30`, `close losers`, `be all`, `chart usdjpy h4`, `alert eurusd > 1.0850`, `help`. |
+| **Autopilot & lab** | Automated trading of the strategies a non-stop genetic search finds, with probation, promotion, benching and lessons learned from losing trades. See below. |
+| **Command line** | `buy eurusd 1% sl 20 tp 40`, `sell limit gbpjpy 0.5 @187.20 sl 30`, `close losers`, `be all`, `chart usdjpy h4`, `alert eurusd > 1.0850`, `auto on`, `lab on`, `help`. |
 
 ### Keyboard
 
 `Shift+B` buy · `Shift+S` sell (uses the ticket) · `1`–`6` timeframe · `[` `]` previous/next pair ·
 `/` command line · `Esc` cancel a pending confirmation.
+
+## Autopilot, strategy lab and learning
+
+The **Autopilot** tab (or `auto on` / `lab on` on the command line) automates everything:
+
+* **Strategy lab**: a genetic search that keeps generating, mutating and crossing strategy
+  "genomes" (strategy type and parameters, ATR stop/target, trend filter, allowed sessions,
+  volatility filter). Each one is backtested on every pair and judged in R (profit per unit
+  of risk) with walk-forward validation: it evolves on the first 60% of history, is ranked on
+  the next 20%, and the last 20% (holdout) is never used for ranking. The leaderboard keeps
+  one entry per signal rule and re-tests entries as new data arrives.
+* **Autopilot**: trades the best strategies on the paper account. *Explore* deploys
+  validated strategies; *Strict* also requires the holdout test. Every strategy starts on
+  **probation** at 0.25% risk, is **promoted** to full risk after 15+ live trades with a
+  positive average, scaled by its live results, and is **benched** for good after a
+  significantly negative record, 7 losses in a row or a 10R drawdown. A stronger candidate
+  can replace an untested probation strategy (at most every 10 minutes). Portfolio limits:
+  max open positions, max positions per currency, no opposite positions on one pair, and the
+  risk guard still applies.
+* **Learning from mistakes**: every autopilot trade is journaled with its context (session,
+  volatility, trend alignment, spread). When losses cluster in one condition, the learner
+  proposes a lesson ("avoid the Asia session"), tests it against history, and adopts it only
+  if history agrees. Lessons expire after 21 days and must prove themselves again.
+
+**Honest limits.** Testing thousands of variants always produces some that look great by
+luck. On simulated prices there is no real edge, so the live record will bench them: that is
+the learning loop working. The backtester charges spread, commission and stop slippage
+(0.2×ATR, calibrated so that random strategies on random prices break even before costs),
+but history is never a guarantee. For research that means something, import real broker
+history (Backtest tab, or `data/history/` for the bot) and still let strategies prove
+themselves on paper first.
+
+## 24/7 draaien (Nederlands)
+
+De browserversie handelt alleen zolang het tabblad open staat. Voor echt 24/7 draai je de
+**headless bot** op een computer die altijd aan staat (VPS, thuisserver, Raspberry Pi). De bot
+draait dezelfde markt, papieren rekening, autopilot en strategie-lab, slaat alles op in
+`data/` en gaat na een herstart verder waar hij was.
+
+```bash
+npm install
+npm run bot                 # bouwen en starten
+# of met Docker, start automatisch opnieuw na een crash of reboot:
+npm run bot:docker          # = npm run bot:build && docker compose up -d --build
+```
+
+* Statuspagina: http://127.0.0.1:8787/ (JSON op `/status`). Alleen-lezen, en standaard
+  alleen bereikbaar op die machine. Gebruik een VPN of SSH-tunnel om hem van buitenaf te
+  bekijken; zet de poort niet open naar internet.
+* Echte data: zet CSV-exports (MetaTrader, Dukascopy, HistData, TradingView) in
+  `data/history/`. Het lab onderzoekt dan op echte koersen in plaats van de simulator.
+* Logboek: `data/neonfx.log`. Toestand: `data/neonfx-state.json`.
+* Instellingen via omgevingsvariabelen (zie `docker-compose.yml`): `NEONFX_AUTO`, `NEONFX_LAB`,
+  `NEONFX_MODE` (`explore`/`strict`), `NEONFX_RISK`, `NEONFX_TF` (`H1`/`H4`),
+  `NEONFX_LAB_DUTY` (0.1–1, aandeel CPU-tijd voor het lab), `NEONFX_PORT`, `NEONFX_HOST`,
+  `NEONFX_DATA`.
+
+De bot handelt met papiergeld op de gesimuleerde feed. Er gaan geen echte orders naar een broker.
 
 ## How the price feed works
 
@@ -86,12 +146,16 @@ src/core/       pure, tested logic
   risk.ts         position sizing and trade preview
   indicators.ts   SMA, EMA, RSI, MACD, Bollinger, ATR, Stochastic, CCI, ADX, Williams %R
   backtest.ts     strategies and the event-driven backtester
+  genome.ts       strategy genomes: mutation, crossover, market context
+  lab.ts          genetic search with walk-forward validation
+  autopilot.ts    automated trading, probation/promotion/benching, lessons
   signals.ts      technical consensus
   analytics.ts    currency strength, correlation
   csv.ts          OHLC import for common broker formats
   command.ts      command-line parser
   time.ts         FX market hours, New York close, sessions
-src/ui/         DOM + canvas UI (chart, ticket, desk, analysis, backtest panel)
+src/ui/         DOM + canvas UI (chart, ticket, desk, analysis, backtest, autopilot)
+bot/            the headless 24/7 bot (Node) with a read-only status page
 tests/          vitest suites for everything in src/core
 ```
 

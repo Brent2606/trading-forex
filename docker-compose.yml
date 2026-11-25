@@ -1,0 +1,17 @@
+services:
+  neonfx-bot:
+    build: .
+    container_name: neonfx-bot
+    restart: unless-stopped
+    # Status page only on this machine. Use a VPN or SSH tunnel to view it remotely.
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - ./data:/app/data
+    environment:
+      NEONFX_AUTO: "on"
+      NEONFX_LAB: "on"
+      NEONFX_MODE: "explore"
+      NEONFX_RISK: "0.5"
+      NEONFX_TF: "H1"
+      NEONFX_LAB_DUTY: "1"

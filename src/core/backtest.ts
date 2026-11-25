@@ -154,6 +154,13 @@ export interface BacktestConfig {
   leverage: number;
   /** Converts an amount in the quote currency to the account currency at the given price. */
   quoteToUsd: (price: number) => number;
+  /**
+   * Stop slippage in ATR(14) multiples. A stop is a market order: price trades through it
+   * before the fill, so filling exactly at the stop price flatters every stop-out.
+   */
+  stopSlipAtr?: number;
+  /** Optional extra entry filter evaluated on the signal bar (session, volatility, lessons...). */
+  allowEntry?: (i: number, side: 'buy' | 'sell') => boolean;
 }
 
 export type BtExitReason = 'sl' | 'tp' | 'signal' | 'end';
@@ -167,6 +174,8 @@ export interface BtTrade {
   units: number;
   pips: number;
   net: number;
+  /** Money at risk at entry (stop distance + round-trip commission); 0 without a stop. */
+  risk: number;
   reason: BtExitReason;
 }
 
@@ -191,6 +200,7 @@ interface OpenPos {
   tp: number | null;
   entryIdx: number;
   commOpen: number;
+  risk: number;
 }
 
 /**
@@ -206,6 +216,7 @@ export function runBacktest(cfg: BacktestConfig): BacktestResult {
   const a = atr(c, 14);
   const trend = cfg.trendFilter > 0 ? ema(closes(c), cfg.trendFilter) : null;
   const spread = cfg.spreadPips * cfg.pip;
+  const slipAtr = cfg.stopSlipAtr ?? 0;
   const commPerUnit = cfg.commissionPerLot / LOT_UNITS;
   const trades: BtTrade[] = [];
   const equity = new Float64Array(n);
@@ -230,6 +241,7 @@ export function runBacktest(cfg: BacktestConfig): BacktestResult {
       units: p.units,
       pips: ((price - p.entry) * dir) / cfg.pip,
       net: gross - comm - p.commOpen,
+      risk: p.risk,
       reason,
     });
     pos = null;
@@ -262,6 +274,7 @@ export function runBacktest(cfg: BacktestConfig): BacktestResult {
       tp: tpDist !== null ? entry + dir * tpDist : null,
       entryIdx: i,
       commOpen,
+      risk: slDist !== null ? units * (slDist * q2u + 2 * commPerUnit) : 0,
     };
   };
 
@@ -276,16 +289,20 @@ export function runBacktest(cfg: BacktestConfig): BacktestResult {
 
     if (pos) {
       const p: OpenPos = pos;
+      const slip = slipAtr > 0 && !Number.isNaN(a[i - 1] ?? NaN) ? slipAtr * a[i - 1] : 0;
       if (p.side === 'buy') {
         const slHit = p.sl !== null && b.l <= p.sl;
         const tpHit = p.tp !== null && b.h >= p.tp;
-        if (slHit) close(i, Math.min(p.sl!, b.o), 'sl');
+        // Gap through the stop: fill at the open. Otherwise the stop price minus slippage,
+        // never below the bar's low.
+        if (slHit) close(i, b.o <= p.sl! ? b.o : Math.max(b.l, p.sl! - slip), 'sl');
         else if (tpHit) close(i, Math.max(p.tp!, b.o), 'tp');
       } else {
         const askO = b.o + spread;
-        const slHit = p.sl !== null && b.h + spread >= p.sl;
+        const askH = b.h + spread;
+        const slHit = p.sl !== null && askH >= p.sl;
         const tpHit = p.tp !== null && b.l + spread <= p.tp;
-        if (slHit) close(i, Math.max(p.sl!, askO), 'sl');
+        if (slHit) close(i, askO >= p.sl! ? askO : Math.min(askH, p.sl! + slip), 'sl');
         else if (tpHit) close(i, Math.min(p.tp!, askO), 'tp');
       }
     }
@@ -297,6 +314,7 @@ export function runBacktest(cfg: BacktestConfig): BacktestResult {
       if (allowed && trend) {
         allowed = !Number.isNaN(trend[i]) && (side === 'buy' ? b.c > trend[i] : b.c < trend[i]);
       }
+      if (allowed && cfg.allowEntry) allowed = cfg.allowEntry(i, side);
       const atrV = a[i];
       const slDist = cfg.slAtr > 0 ? (Number.isNaN(atrV) ? NaN : cfg.slAtr * atrV) : null;
       const tpDist = cfg.tpAtr > 0 ? (Number.isNaN(atrV) ? NaN : cfg.tpAtr * atrV) : null;

@@ -89,6 +89,20 @@ describe('backtest engine', () => {
     expect(r.trades[0].exitIdx).toBe(23);
   });
 
+  it('applies stop slippage, bounded by the bar, and fills gaps at the open', () => {
+    const c = flat(30, 1.1, 0.0002); // ATR ≈ 0.0002
+    c[22] = bar(22 * H, 1.1, 1.1001, 1.0980, 1.0985);
+    const r = runBacktest(cfg({ candles: c, strategy: scripted({ 20: 1 }), slAtr: 5, stopSlipAtr: 1 }));
+    const t = r.trades[0];
+    expect(t.reason).toBe('sl');
+    const sl = t.entry - 5 * 0.0002;
+    expect(t.exit).toBeCloseTo(sl - 0.0002, 6); // one ATR worse than the stop
+    const tight = flat(30, 1.1, 0.0002);
+    tight[22] = bar(22 * H, 1.1, 1.1001, 1.0989, 1.0995);
+    const r2 = runBacktest(cfg({ candles: tight, strategy: scripted({ 20: 1 }), slAtr: 5, stopSlipAtr: 50 }));
+    expect(r2.trades[0].exit).toBe(1.0989); // never worse than the bar's low
+  });
+
   it('sizes positions from risk and the ATR stop', () => {
     const c = flat(40, 1.1, 0.002);
     const r = runBacktest(cfg({ candles: c, strategy: scripted({ 20: 1 }), slAtr: 1, riskPct: 1 }));

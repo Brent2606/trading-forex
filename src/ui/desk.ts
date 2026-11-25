@@ -32,6 +32,7 @@ const REASON: Record<string, string> = {
   stopout: 'STOP-OUT',
   guard: 'Risk guard',
   reverse: 'Reversed',
+  signal: 'Strategy exit',
 };
 
 export function initDesk(app: App): Desk {

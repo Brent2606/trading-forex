@@ -1,4 +1,6 @@
 import { freshState, parseState, TradingEngine, type EngineEvent } from '../core/account';
+import { Autopilot, freshAutopilotState, parseAutopilotState } from '../core/autopilot';
+import type { Evaluation, LabStats } from '../core/lab';
 import { checkAlerts, inferCondition, validateAlert, type PriceAlert } from '../core/alerts';
 import { TIMEFRAMES, type Candle, type Timeframe } from '../core/candles';
 import { HELP_LINES, parseCommand, type Command } from '../core/command';
@@ -9,6 +11,8 @@ import { randomSeed } from '../core/rng';
 import { load, save } from '../core/storage';
 import { DAY } from '../core/time';
 import { initAnalysis } from './analysis';
+import { initAutopilotPanel } from './autopilotPanel';
+import { LabClient } from './labClient';
 import { initBacktest, tfForBarMs } from './backtestPanel';
 import { CandleChart, type PriceLine } from './chart';
 import { loadPrefs, type App, type OrderIntent, type SoundKind, type ToastKind } from './context';
@@ -243,7 +247,7 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
       }
       case 'close': {
         const t = e.trade;
-        const reason = { manual: 'closed', sl: 'stop loss', tp: 'take profit', trail: 'trailing stop', stopout: 'STOP-OUT', guard: 'risk guard', reverse: 'reversed' }[t.reason];
+        const reason = { manual: 'closed', sl: 'stop loss', tp: 'take profit', trail: 'trailing stop', stopout: 'STOP-OUT', guard: 'risk guard', reverse: 'reversed', signal: 'strategy exit' }[t.reason];
         const msg = `#${t.positionId} ${displaySymbol(t.symbol)} ${moneySigned(t.net)} (${fmtPips(t.pips)} pips) · ${reason}`;
         toast(t.net >= 0 ? 'Closed in profit' : 'Closed at a loss', msg, t.net >= 0 ? 'ok' : t.reason === 'stopout' ? 'err' : 'warn');
         log(`CLOSED ${msg}`, t.net >= 0 ? 'ok' : 'warn');
@@ -504,6 +508,7 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
 
   function showCsvOnChart(): void {
     if (!app.csv) return;
+    apPanel.csvAvailable();
     app.chartSource = 'csv';
     loadChart(true);
     analysis.renderTech();
@@ -572,6 +577,7 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
     if (tab === 'scanner') analysis.renderScanner();
     if (tab === 'correlation') analysis.renderCorrelation();
     if (tab === 'risk') desk.renderRisk();
+    if (tab === 'autopilot') apPanel.render();
     app.savePrefs();
   }
   tabs.addEventListener('click', (e) => {
@@ -707,6 +713,18 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
         ticket.refresh();
         log(`Ticket sizing: ${c.pct}% of equity per trade`, 'ok');
         return;
+      case 'auto':
+        if (c.on === undefined) {
+          const n = autopilot.liveDeployments().length;
+          log(`Autopilot is ${autopilot.config.enabled ? 'ON' : 'OFF'} · ${n} strateg${n === 1 ? 'y' : 'ies'} deployed · lab ${autopilot.config.lab ? 'searching' : 'paused'}`, 'info');
+        } else apPanel.setEnabled(c.on);
+        return;
+      case 'lab':
+        if (c.on === undefined) {
+          const s = lab.stats;
+          log(s ? `Lab: generation ${s.generation}, ${s.tested} strategies tested, ${lab.hof.length} on the leaderboard (${s.dataLabel})` : 'Lab starting', 'info');
+        } else apPanel.setLab(c.on);
+        return;
       case 'reset':
         if (!c.confirmed) {
           log('This wipes positions, orders and history. Type "reset confirm" (or "reset 25000 confirm").', 'warn');
@@ -742,11 +760,36 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
     }
   });
 
+  // ---- autopilot + strategy lab
+  const apSaved = parseAutopilotState(load('autopilot')) ?? freshAutopilotState();
+  const labSaved = load<{ hof?: Evaluation[]; stats?: Partial<LabStats> }>('lab');
+  const lab = new LabClient({
+    type: 'init',
+    seed: randomSeed(),
+    commission: engine.state.settings.commissionPerLot,
+    hof: Array.isArray(labSaved?.hof) ? labSaved.hof : [],
+    stats: labSaved?.stats ?? {},
+    blacklist: apSaved.blacklist,
+  });
+  const autopilot = new Autopilot(apSaved, {
+    engine,
+    series: (s, tf) => market.series(s, tf),
+    quote: (s) => market.quote(s),
+    mid: market.mid,
+    now: () => market.time,
+    validate: (lesson, genomes) => lab.validate(lesson, genomes),
+    log: (msg, kind) => log(msg, kind),
+  });
+  engine.on((e) => {
+    if (e.type === 'close') autopilot.onClose(e.trade);
+  });
+
   // ---- modules
   const ticket = initTicket(app);
   const desk = initDesk(app);
   const analysis = initAnalysis(app);
   initBacktest(app);
+  const apPanel = initAutopilotPanel(app, autopilot, lab);
   let deskDirty = false;
 
   loadChart(true);
@@ -762,12 +805,15 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
   log(`Price anchor: ${market.seed.label}. Spreads widen at the 17:00 New York rollover.`, 'info');
 
   // ---- persistence
+  let flushes = 0;
   function flush(): void {
     if (accountDirty) {
       save('account', engine.state);
       accountDirty = false;
     }
     save('market', { t: market.time, rates: market.snapshotRates() });
+    save('autopilot', autopilot.state);
+    if (flushes++ % 10 === 0 && lab.stats) save('lab', { hof: lab.hof, stats: lab.stats });
   }
   setInterval(flush, 3000);
   document.addEventListener('visibilitychange', () => {
@@ -786,6 +832,7 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
       engine.onTick();
       if (alerts.length) fired.push(...checkAlerts(alerts, (s) => market.quote(s), market.time));
     });
+    autopilot.onTick();
     for (const a of fired) {
       const msg = `${displaySymbol(a.symbol)} bid ${a.cond === 'above' ? '≥' : '≤'} ${a.price}`;
       toast('Price alert', msg, 'warn');
@@ -830,6 +877,7 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
     if (slow % 8 === 0) {
       analysis.renderTech();
       analysis.renderStrength();
+      apPanel.tick();
     }
     if (slow % 20 === 0 && prefs.tab === 'scanner') analysis.renderScanner();
     if (slow % 40 === 0 && prefs.tab === 'correlation') analysis.renderCorrelation();

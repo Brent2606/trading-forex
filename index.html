@@ -42,6 +42,7 @@
         <div class="status">
           <span class="chip" id="feed-chip" title="Price source">SIM FEED</span>
           <span class="chip" id="guard-chip" title="Risk guard status">GUARD</span>
+          <button type="button" class="chip chip-btn" id="auto-chip" title="Autopilot status. Click to open the Autopilot tab">AUTO OFF</button>
           <span class="clock" id="clock" title="Your local time, and UTC">--:--:--</span>
           <button class="iconbtn" id="fx-toggle" type="button" aria-pressed="true" title="Toggle glow and scanline effects">FX</button>
           <button class="iconbtn" id="sound-toggle" type="button" aria-pressed="true" title="Toggle sounds">SND</button>
@@ -205,6 +206,7 @@
       <!-- ============================== DOCK ============================== -->
       <section class="panel dock" aria-label="Trading desk">
         <div class="tabs" role="tablist" id="tabs">
+          <button type="button" role="tab" data-tab="autopilot" class="tab-ap">Autopilot <b id="cnt-ap">OFF</b></button>
           <button type="button" role="tab" data-tab="positions">Positions <b id="cnt-pos">0</b></button>
           <button type="button" role="tab" data-tab="orders">Orders <b id="cnt-ord">0</b></button>
           <button type="button" role="tab" data-tab="history">History</button>
@@ -214,6 +216,54 @@
           <button type="button" role="tab" data-tab="correlation">Correlation</button>
           <button type="button" role="tab" data-tab="alerts">Alerts <b id="cnt-al">0</b></button>
           <button type="button" role="tab" data-tab="risk">Risk &amp; account</button>
+        </div>
+
+        <div class="tabpane" data-pane="autopilot" hidden>
+          <div class="ap">
+            <form class="ap-controls" id="ap-form">
+              <label class="switch"><input type="checkbox" id="ap-enabled" /><span>Auto-trading</span></label>
+              <label class="switch"><input type="checkbox" id="ap-lab" /><span>Strategy lab</span></label>
+              <label>Mode
+                <select id="ap-mode" class="sel sm">
+                  <option value="explore">Explore: validated strategies, on probation</option>
+                  <option value="strict">Strict: must also pass the holdout test</option>
+                </select>
+              </label>
+              <label>Risk % <input id="ap-risk" type="number" step="0.05" min="0.05" max="2" /></label>
+              <label>Probation % <input id="ap-prisk" type="number" step="0.05" min="0.05" max="2" /></label>
+              <label>Max open <input id="ap-maxopen" type="number" step="1" min="1" max="20" /></label>
+              <label>Timeframe
+                <select id="ap-tf" class="sel sm"><option value="H1">H1</option><option value="H4">H4</option></select>
+              </label>
+              <label>Lab data
+                <select id="ap-data" class="sel sm">
+                  <option value="sim">Simulated market (16 pairs)</option>
+                  <option value="csv" disabled>Imported CSV</option>
+                </select>
+              </label>
+              <label>Lab speed
+                <select id="ap-duty" class="sel sm"><option value="0.25">Eco</option><option value="0.6">Normal</option><option value="1">Max</option></select>
+              </label>
+            </form>
+            <p class="ap-note" id="ap-note"></p>
+            <div class="ap-grid">
+              <section class="ap-col">
+                <div class="mini-h">Strategy lab <span class="ap-pulse" id="ap-pulse"></span></div>
+                <div class="tiles ap-tiles" id="ap-labstats"></div>
+                <div class="scroll x">
+                  <table class="tbl" id="ap-hof"></table>
+                </div>
+              </section>
+              <section class="ap-col">
+                <div class="mini-h">Deployed strategies <span class="ph-note" id="ap-next"></span></div>
+                <div class="scroll x"><table class="tbl" id="ap-deps"></table></div>
+                <div class="mini-h">Lessons learned</div>
+                <ul class="ap-lessons" id="ap-lessons"></ul>
+                <div class="mini-h">Live record by session (what the learner sees)</div>
+                <div class="scroll x"><table class="tbl" id="ap-sessions"></table></div>
+              </section>
+            </div>
+          </div>
         </div>
 
         <div class="tabpane" data-pane="positions">
