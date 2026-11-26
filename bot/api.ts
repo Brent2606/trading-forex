@@ -6,7 +6,8 @@ import type { BotControl, BotStatus } from '../src/core/botTypes';
 
 /**
  * HTTP routes of the bot.
- *   GET  /              human-readable status page (same machine only, no token)
+ *   GET  /              the bot dashboard (same machine only, no token; reads /status)
+ *   GET  /classic       the plain server-rendered status page
  *   GET  /status        status JSON (no token, no cross-origin access)
  *   GET  /api/status    status JSON for the terminal (token + CORS)
  *   POST /api/control   {"auto": bool, "lab": bool} (token + CORS)
@@ -16,6 +17,7 @@ export interface ApiDeps {
   token: string;
   status(): BotStatus;
   page(): string;
+  classicPage?: () => string;
   control(c: BotControl): void;
 }
 
@@ -100,6 +102,10 @@ export function handleRequest(rq: IncomingMessage, rs: ServerResponse, deps: Api
     return;
   }
   if (url === '/status') return json(rs, 200, deps.status(), false);
+  if (url === '/classic' && deps.classicPage) {
+    rs.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }).end(deps.classicPage());
+    return;
+  }
   if (url === '/') {
     rs.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }).end(deps.page());
     return;

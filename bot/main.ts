@@ -32,7 +32,9 @@ import type { Dataset, Evaluation, LabStats } from '../src/core/lab';
 import { createLabHost, type LabOut } from '../src/core/labHost';
 import { isValidSnapshot, MarketSim, sanitizeRates, type MarketSeed, type MarketSnapshot } from '../src/core/market';
 import { randomSeed } from '../src/core/rng';
-import { DAY, tradingDayKey } from '../src/core/time';
+import { DAY, isFxOpen, nextFxChange, tradingDayKey } from '../src/core/time';
+import { bucketStart, TF_MS } from '../src/core/candles';
+import { dashboardHtml } from './dashboard';
 import { channelsFromEnv, createNotifier } from './notify';
 import { setLang, trLines } from '../src/core/i18n';
 import { freshMirrorState, OandaClient, OandaMarket, OandaMirror, resolveBaseUrl, type MirrorState } from './oanda';
@@ -286,7 +288,9 @@ async function main(): Promise<void> {
     log(`OANDA order mirroring ON: account ${mirror.currency} NAV ${mirror.nav ?? '?'}`, 'ok');
   } else if (oanda) log('OANDA order mirroring OFF (prices only). Set NEONFX_OANDA_TRADE=on to copy trades to the practice account');
   const apState = parseAutopilotState(saved.autopilot) ?? freshAutopilotState();
-  apState.config.enabled = flag(env.NEONFX_AUTO, true);
+  // Auto-trading is locked ON unless NEONFX_AUTO_LOCK=off: the bot is meant to trade 24/7.
+  const AUTO_LOCK = flag(env.NEONFX_AUTO_LOCK, true);
+  apState.config.enabled = AUTO_LOCK || flag(env.NEONFX_AUTO, true);
   apState.config.lab = flag(env.NEONFX_LAB, true);
   if (env.NEONFX_MODE === 'strict' || env.NEONFX_MODE === 'explore') apState.config.mode = env.NEONFX_MODE;
   if (env.NEONFX_RISK && Number(env.NEONFX_RISK) > 0) apState.config.riskPct = Math.min(2, Number(env.NEONFX_RISK));
@@ -318,14 +322,17 @@ async function main(): Promise<void> {
   });
   let dataLabel = '';
   const refreshData = () => {
-    if (market.real) {
+    const real = realDatasets(market.mid);
+    // With a broker feed, the longer CSV history (if any) still beats the broker's ~10 months of bars.
+    if (market.real && !real.datasets.length) {
       apState.config.labData = 'sim';
       const ds = marketDatasets((s, tf) => market.series(s, tf), apState.config.tf, apState.config.universe, market.mid);
-      dataLabel = `OANDA ${apState.config.tf}, ${ds.length} pairs (real prices)`;
+      const label = `${market.label} ${apState.config.tf}, ${ds.length} pairs (real prices)`;
+      if (label !== dataLabel) log(`LAB researching ${label}`);
+      dataLabel = label;
       labIn({ type: 'data', datasets: ds, kind: 'real', label: dataLabel });
       return;
     }
-    const real = realDatasets(market.mid);
     if (real.datasets.length) {
       apState.config.labData = 'csv';
       const label = `real data: ${real.names.join(', ')}`;
@@ -447,6 +454,10 @@ async function main(): Promise<void> {
     autopilot.onTick();
   }, 1000);
   setInterval(() => {
+    if (AUTO_LOCK && !apState.config.enabled) {
+      apState.config.enabled = true;
+      log('Autopilot was off; switched back ON (auto-trading is locked on)', 'warn');
+    }
     if (apState.config.enabled) autopilot.sync(hof.filter((e) => e.dataVersion === labStats?.dataVersion), labStats?.tested ?? 0);
     if (apState.blacklist.length > banned) {
       labIn({ type: 'ban', ids: apState.blacklist.slice(banned) });
@@ -539,6 +550,25 @@ async function main(): Promise<void> {
             ? { connected: false, label: env.NEONFX_CTRADER_CLIENT_ID ? 'cTrader unavailable' : 'OANDA unavailable', mirror: false, nav: null, openTrades: 0, error: brokerError }
             : null,
       log: recent.slice(-40),
+      summary: (() => {
+        const hist = engine.state.history;
+        const now = Date.now();
+        const tf = apState.config.tf as Timeframe;
+        const open = isFxOpen(now);
+        return {
+          startBalance: engine.state.settings.startBalance,
+          totalNet: Math.round(hist.reduce((a, t) => a + t.net, 0) * 100) / 100,
+          wins: hist.filter((t) => t.net > 0).length,
+          losses: hist.filter((t) => t.net <= 0).length,
+          autoLocked: AUTO_LOCK,
+          dayLocked: engine.state.guard.enabled && engine.state.day.locked,
+          dayLockReason: engine.state.day.lockReason,
+          nextDecision: bucketStart(now, tf) + TF_MS[tf],
+          marketOpensAt: open ? null : nextFxChange(now),
+          realPrices: market.real,
+          labData: dataLabel,
+        };
+      })(),
     };
   };
   const sparkline = (pts: [number, number][]) => {
@@ -570,7 +600,9 @@ ${s.marketOpen ? '' : '<div style="color:#ffc23d">FX market closed for the weeke
   };
   const access = loadOrCreateToken(DATA, env.NEONFX_TOKEN);
   const control = (c: BotControl) => {
-    if (c.auto !== undefined && c.auto !== apState.config.enabled) {
+    if (c.auto === false && AUTO_LOCK) {
+      log('Request to switch the autopilot OFF ignored: auto-trading is locked on (NEONFX_AUTO_LOCK)', 'warn');
+    } else if (c.auto !== undefined && c.auto !== apState.config.enabled) {
       apState.config.enabled = c.auto;
       const msg = `Autopilot switched ${c.auto ? 'ON' : 'OFF'} from the terminal`;
       log(msg);
@@ -583,7 +615,8 @@ ${s.marketOpen ? '' : '<div style="color:#ffc23d">FX market closed for the weeke
     }
     persist();
   };
-  createServer((rq, rs) => handleRequest(rq, rs, { token: access.token, status, page, control }))
+  const dashboard = dashboardHtml();
+  createServer((rq, rs) => handleRequest(rq, rs, { token: access.token, status, page: () => dashboard, classicPage: page, control }))
     .on('error', (e) => log(`Status server: ${e.message}`, 'err'))
     .listen(PORT, HOST, () =>
       log(

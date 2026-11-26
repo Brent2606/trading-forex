@@ -40,8 +40,8 @@ export function initBotPanel(app: App): { render(): void } {
     const nl = getLang() === 'nl';
     const parts = [
       nl
-        ? 'Toont de 24/7-bot zonder browser (<code>npm run bot</code> of Docker) en laat je de autopilot en het lab ervan aan- en uitzetten. Het token staat in <code>data/neonfx-token.txt</code> op de bot-machine en wordt na verbinden in deze browser bewaard.'
-        : 'Shows the headless 24/7 bot (<code>npm run bot</code> or Docker) and lets you switch its autopilot and lab. The token is in <code>data/neonfx-token.txt</code> on the bot machine and is stored in this browser after connecting.',
+        ? 'Eenvoudig overzicht van je bot: open <a href="' + escapeHtml(base()) + '/" target="_blank" rel="noopener">' + escapeHtml(base()) + '</a> (geen token nodig). Dit tabblad toont de 24/7-bot zonder browser (<code>npm run bot</code> of Docker) en laat je de autopilot en het lab ervan aan- en uitzetten. Het token staat in <code>data/neonfx-token.txt</code> op de bot-machine en wordt na verbinden in deze browser bewaard.'
+        : 'Simple bot overview: open <a href="' + escapeHtml(base()) + '/" target="_blank" rel="noopener">' + escapeHtml(base()) + '</a> (no token needed). This tab shows the headless 24/7 bot (<code>npm run bot</code> or Docker) and lets you switch its autopilot and lab. The token is in <code>data/neonfx-token.txt</code> on the bot machine and is stored in this browser after connecting.',
     ];
     if (page === 'https:' && base().startsWith('http:')) {
       parts.unshift(
@@ -153,6 +153,9 @@ export function initBotPanel(app: App): { render(): void } {
     setText($('cnt-bot'), s.autopilot.enabled ? 'ON' : 'OFF');
     if (app.prefs.tab !== 'bot') return;
     autoIn.checked = s.autopilot.enabled;
+    // The bot keeps auto-trading locked on: show it, but don't offer a switch that does nothing.
+    autoIn.disabled = !!s.summary?.autoLocked;
+    autoIn.closest('label')?.setAttribute('title', s.summary?.autoLocked ? (getLang() === 'nl' ? 'Staat altijd aan op de server' : 'Always on (locked on the server)') : '');
     labIn.checked = s.lab.running;
     const up = s.uptimeSec >= 86400 ? `${Math.floor(s.uptimeSec / 86400)}d ${Math.floor((s.uptimeSec % 86400) / 3600)}h` : `${Math.floor(s.uptimeSec / 3600)}h ${Math.floor((s.uptimeSec % 3600) / 60)}m`;
     setText($('bot-meta'), `${s.feed} · ${s.marketOpen ? 'market open' : 'market closed'} · up ${up} · ${s.autopilot.mode}, ${s.autopilot.timeframe}`);

@@ -36,6 +36,24 @@ export interface BotStatus {
   };
   broker: { connected: boolean; label: string; mirror: boolean; nav: number | null; openTrades: number; error: string } | null;
   log: string[];
+  /** Plain-language summary for the bot's own dashboard (optional for older bots). */
+  summary?: {
+    startBalance: number;
+    totalNet: number;
+    wins: number;
+    losses: number;
+    /** True when auto-trading cannot be switched off from a browser. */
+    autoLocked: boolean;
+    /** Risk guard locked trading for the rest of the day. */
+    dayLocked: boolean;
+    dayLockReason: string;
+    /** Next moment (UTC ms) the autopilot evaluates closed bars. */
+    nextDecision: number;
+    /** When the FX market reopens (UTC ms), or null while it is open. */
+    marketOpensAt: number | null;
+    realPrices: boolean;
+    labData: string;
+  };
 }
 
 export interface BotControl {

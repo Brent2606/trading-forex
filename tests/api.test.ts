@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { handleRequest, loadOrCreateToken, tokenOk } from '../bot/api';
+import { dashboardHtml } from '../bot/dashboard';
 import type { BotControl, BotStatus } from '../src/core/botTypes';
 
 const TOKEN = 'secret-token-123456';
@@ -15,7 +16,7 @@ let base = '';
 
 beforeAll(async () => {
   server = createServer((rq, rs) =>
-    handleRequest(rq, rs, { token: TOKEN, status: () => status, page: () => '<html>ok</html>', control: (c) => controls.push(c) }),
+    handleRequest(rq, rs, { token: TOKEN, status: () => status, page: () => '<html>ok</html>', classicPage: () => '<html>classic</html>', control: (c) => controls.push(c) }),
   );
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -84,5 +85,20 @@ describe('bot API', () => {
     expect(b).toEqual({ ...a, created: false });
     expect(loadOrCreateToken(dir, 'my-own-long-token').token).toBe('my-own-long-token');
     expect(loadOrCreateToken(dir, 'short').token).toBe(a.token);
+  });
+
+  it('serves the dashboard at / and the classic page at /classic without a token', async () => {
+    expect(await (await fetch(`${base}/`)).text()).toBe('<html>ok</html>');
+    expect(await (await fetch(`${base}/classic`)).text()).toBe('<html>classic</html>');
+  });
+});
+
+describe('bot dashboard', () => {
+  it('is a self-contained Dutch page that reads /status', () => {
+    const html = dashboardHtml();
+    expect(html).toMatch(/^<!doctype html>/i);
+    expect(html).toContain('Mijn bot');
+    expect(html).toContain("fetch('/status'");
+    expect(html).not.toMatch(/<script[^>]+src=/);
   });
 });
