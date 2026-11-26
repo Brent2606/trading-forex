@@ -11,6 +11,7 @@ training data, and then trades the month it has never seen. Costs: spread, commi
 
 Usage: python ml_hourly.py <hourly csv folder>
 """
+import os
 import sys
 import time
 
@@ -20,12 +21,16 @@ import pandas as pd
 
 from common import PAIRS, atr, cost_pips, load_hourly, pip, summary
 
-SL_ATR = 1.5   # stop distance in ATR(14)
-TP_ATR = 1.5   # target distance in ATR(14)
-HORIZON = 24   # bars a trade may stay open
+# Stop and target in ATR(14) and the bars a trade may stay open; override with the environment,
+# e.g. SL_ATR=1.5 TP_ATR=3 HORIZON=48 for a 1:2 risk:reward.
+SL_ATR = float(os.environ.get('SL_ATR', 1.5))
+TP_ATR = float(os.environ.get('TP_ATR', 1.5))
+HORIZON = int(os.environ.get('HORIZON', 24))
 MIN_TRAIN_MONTHS = 12
 STEP_MONTHS = 2     # each model trades the next two months, then a new one is trained
-THRESHOLDS = [0.50, 0.52, 0.54, 0.56, 0.58, 0.60, 0.62, 0.65]
+# Entry thresholds are tried relative to how often that kind of trade wins at all (the base rate),
+# so the same list works for 1:1 and for 1:2 or 1:3 targets.
+THRESHOLD_STEPS = [0.00, 0.02, 0.04, 0.06, 0.08, 0.10, 0.12, 0.15]
 PARAMS = dict(objective='binary', learning_rate=0.05, num_leaves=31, min_data_in_leaf=400, feature_fraction=0.7,
               bagging_fraction=0.7, bagging_freq=1, lambda_l2=10.0, verbose=-1, num_threads=1, seed=7)
 ROUNDS = 200
@@ -167,6 +172,7 @@ def main(folder):
     allf = pd.concat(rows).dropna()
     feat_cols = [c for c in allf.columns if c not in ('sym', 'i', 'r_l', 'r_s', 'x_l', 'x_s', 'w_l', 'w_s')]
     allf = allf.sort_index()
+    print(f'stop {SL_ATR}×ATR, target {TP_ATR}×ATR (1:{TP_ATR / SL_ATR:g}), at most {HORIZON} hours')
     print(f'{len(allf)} samples, {len(feat_cols)} features, {allf.index.min():%Y-%m-%d} to {allf.index.max():%Y-%m-%d} ({time.time() - t0:.0f}s)', flush=True)
 
     months = pd.period_range(allf.index.min().tz_localize(None).to_period('M'), allf.index.max().tz_localize(None).to_period('M'), freq='M')
@@ -189,7 +195,8 @@ def main(folder):
         # Pick the threshold on validation data only.
         best_thr, best_sum = None, 0.0
         vp = {n: models[n].predict(val[feat_cols]) for n in ('l', 's')}
-        for thr in THRESHOLDS:
+        base_rate = float(np.mean([fit['w_l'].mean(), fit['w_s'].mean()]))
+        for thr in [base_rate + step for step in THRESHOLD_STEPS]:
             tot = []
             for sym, g in val.assign(pl=vp['l'], ps=vp['s']).groupby('sym'):
                 g = g.sort_values('i')
@@ -217,7 +224,7 @@ def main(folder):
                 side = rng.integers(0, 2, size=len(pick))
                 base_all += [g['r_l'].iloc[k] if s else g['r_s'].iloc[k] for k, s in zip(pick, side)]
         results.append((m, month_r))
-        print(f'{m}: threshold {best_thr:.2f} · {len(month_r):4d} trades · mean {np.mean(month_r) if month_r else 0:+.3f}R ({time.time() - t0:.0f}s)', flush=True)
+        print(f'{m}: threshold {best_thr:.2f} (base rate {base_rate:.2f}) · {len(month_r):4d} trades · mean {np.mean(month_r) if month_r else 0:+.3f}R ({time.time() - t0:.0f}s)', flush=True)
 
     allr = [x for _, rr in results for x in rr]
     days = sum(((m + STEP_MONTHS).start_time - m.start_time).days for m, _ in results) * 5 / 7
@@ -230,7 +237,11 @@ def main(folder):
     for y, rr in sorted(by_year.items()):
         print(summary(f'  {y}', rr))
     pos = sum(1 for _, rr in results if rr and np.sum(rr) > 0)
-    print(f'periods in profit: {pos} of {sum(1 for _, rr in results if rr)} · thresholds chosen: {chosen}')
+    print(f'periods in profit: {pos} of {sum(1 for _, rr in results if rr)} · thresholds chosen: {[None if c is None else round(c, 2) for c in chosen]}')
+    # The same result in money: R is the amount risked per trade.
+    for acct, risk in ((10_000, 1.0), (10_000, 0.25)):
+        per = acct * risk / 100
+        print(f'  on a {acct:,} account at {risk}% risk: {per:.0f} per trade at risk · total {np.sum(allr) * per:+,.0f} over {len(allr)} trades ({np.mean(allr) * per if allr else 0:+.2f} per trade)')
 
 
 if __name__ == '__main__':

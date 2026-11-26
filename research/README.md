@@ -20,6 +20,20 @@ They run in their own container next to the bot (`run.sh`, one CPU), not inside 
 | Learning model, hourly | 22 months, 656 trades | −0.02R (±0.04) per trade after costs, against −0.15R for random entries |
 | Predictability of hourly bars | 4 folds | IC +0.01 to +0.04 at every horizon; top/bottom 10% earn +0.6 pips (1 h) to +3.4 pips (24 h) before a cost of 2.3 pips |
 
+### Does a different risk:reward help? (hourly learning model, same walk-forward)
+
+| Stop / target (ATR), max hold | Trades | Model | Random entries |
+| --- | --- | --- | --- |
+| 1.5 / 1.5 (1:1), 24 h | 493 | +0.02R (±0.04), 57% wins | −0.15R, 49% wins |
+| 1.5 / 3 (1:2), 48 h | 592 | −0.04R (±0.06), 36% wins | −0.06R, 35% wins |
+| 3 / 6 (1:2), 96 h | 1518 | −0.07R (±0.03), 36% wins | −0.08R, 35% wins |
+
+The model's skill is in small, short moves: at 1:1 it wins clearly more often than chance, at
+1:2 it is no better than random entries. (The 1:1 row is a rerun with entry thresholds set
+relative to the base win rate; the first run gave −0.02R over 656 trades. Both are zero within
+the margin.) Account size and risk per trade only scale the result: on a 10,000 account at 1%
+risk these three rows come to about +970, −2,260 and −10,400.
+
 **Reading it.** Nothing here makes money on unseen data. The hourly learning model is the one
 lead: it beats random entries by about 0.13R and roughly earns back its costs. That evidence
 is thin: 2.8 years of free quote data, overlapping samples at the 24-hour horizon (the only one
