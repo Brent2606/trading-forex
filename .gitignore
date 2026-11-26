@@ -6,3 +6,7 @@ dist-single/
 data/
 dist-bot/
 .env
+research/daily/
+research/hourly/
+research/*.log
+research/__pycache__/
