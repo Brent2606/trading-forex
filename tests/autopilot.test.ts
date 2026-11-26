@@ -85,6 +85,15 @@ describe('deployment', () => {
     expect(ap.state.deployments.every((d) => d.status === 'probation')).toBe(true);
   });
 
+  it('explore mode deploys strategies that passed the holdout before validated-only ones', () => {
+    const { ap } = setup();
+    ap.state.config.maxDeployments = 1;
+    const ema = normalize({ ...donchian, strategy: 'ema-cross', params: { fast: 10, slow: 50 } });
+    // The validated-only one ranks first on the leaderboard, yet the robust one is chosen.
+    ap.sync([evaluation(donchian, { robust: false, score: 9 }), evaluation(ema, { robust: true, score: 3 })]);
+    expect(ap.liveDeployments().map((d) => d.id)).toEqual([genomeId(ema)]);
+  });
+
   it('waits until the lab has tested enough strategies, and explore still needs validation', () => {
     const { ap } = setup();
     ap.sync([evaluation(donchian)], 20);

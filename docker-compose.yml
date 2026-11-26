@@ -15,6 +15,11 @@ services:
       NEONFX_MODE: "explore"
       NEONFX_RISK: "0.5"
       NEONFX_TF: "H1"
+      # Gathering data quickly: more strategies trade at once, each at the small probation risk.
+      # For a calmer bot use 3 / 6 / 3 (the defaults).
+      NEONFX_MAX_STRATEGIES: "8"
+      NEONFX_MAX_OPEN: "10"
+      NEONFX_MAX_PER_CCY: "4"
       NEONFX_LAB_DUTY: "1"
       NEONFX_LANG: "nl"                    # notifications in Dutch ("en" for English)
       # Notifications (see README). Keep tokens out of git, e.g. in a .env file next to this one.

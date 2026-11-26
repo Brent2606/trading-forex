@@ -281,7 +281,9 @@ export class Autopilot {
   eligible(hof: readonly Evaluation[]): Evaluation[] {
     const banned = new Set(this.state.blacklist);
     const deployed = new Set(this.state.deployments.map((d) => d.id));
-    return hof.filter((e) => !banned.has(e.id) && !deployed.has(e.id) && (this.config.mode === 'strict' ? e.robust : e.validated));
+    const ok = hof.filter((e) => !banned.has(e.id) && !deployed.has(e.id) && (this.config.mode === 'strict' ? e.robust : e.validated));
+    // Explore mode: strategies that also passed the holdout go first (the order within each group stays).
+    return [...ok.filter((e) => e.robust), ...ok.filter((e) => !e.robust)];
   }
 
   /**

@@ -39,6 +39,7 @@ Requires Node 20+. No runtime dependencies; everything is TypeScript + Canvas.
 | **Technical pulse & scanner** | A 17-indicator consensus gauge (10 moving averages + RSI, Stochastic, MACD, CCI, ADX, Williams %R, Momentum) for the chart, and a heat grid of every pair on M15/H1/H4/D1. It describes the chart; it is not a forecast. |
 | **Sessions, strength, correlation** | Sydney/Tokyo/London/New York sessions from the real time-zone database (DST-correct), with overlaps; a currency-strength meter; a correlation heatmap so you can see when two trades are really one bet. |
 | **Alerts** | Price alerts with sound, drawn on the chart. |
+| **Trades & explanations** | Every trade per day. Click one to see it on the chart (entry, exit, target and stop zones, the signal candle, the strategy's own indicator) and read in plain language why it was taken and how it ended. |
 | **Autopilot & lab** | Automated trading of the strategies a non-stop genetic search finds, with probation, promotion, benching and lessons learned from losing trades. See below. |
 | **Command line** | `buy eurusd 1% sl 20 tp 40`, `sell limit gbpjpy 0.5 @187.20 sl 30`, `close losers`, `be all`, `chart usdjpy h4`, `alert eurusd > 1.0850`, `auto on`, `lab on`, `help`. |
 
@@ -55,12 +56,20 @@ The **Autopilot** tab (or `auto on` / `lab on` on the command line) automates ev
   "genomes" (strategy type and parameters, ATR stop/target, trend filter, allowed sessions,
   volatility filter). Each one is backtested on every pair and judged in R (profit per unit
   of risk) with walk-forward validation: it evolves on the first 60% of history, is ranked on
-  the next 20%, and the last 20% (holdout) is never used for ranking. "Robust" also requires
+  the next 20%, and the last 20% (holdout) is never used for ranking. Ranking uses a cautious
+  SQN: every sample is scored as if its next trade were a full loss, more trades count as more
+  evidence (up to 400), and a strategy needs at least 40 validation trades to be ranked at
+  all. Without that, a handful of trades that never lost scores absurdly high and the search
+  drifts to "wide stop, tiny target" rules whose rare big loss is simply not in the sample
+  yet. On 2.8 years of real hourly data, strategies picked this way traded about ten times as
+  often and lost far less on the unseen holdout than those picked on the plain SQN (but they
+  still did not show a profit there: see the honest limits below). "Robust" also requires
   profits out-of-sample on at least 60% of the pairs, so one lucky trend can't carry a rule.
   The leaderboard keeps one entry per signal rule (near-copies count as one) and re-tests
   entries as new data arrives.
 * **Autopilot**: trades the best strategies on the paper account. *Explore* deploys
-  validated strategies; *Strict* also requires the holdout test. Every strategy starts on
+  validated strategies (those that also passed the holdout first); *Strict* deploys only
+  strategies that passed the holdout. Every strategy starts on
   **probation** at 0.25% risk, is **promoted** to full risk after 15+ live trades with a
   positive average, scaled by its live results, and is **benched** for good after a
   significantly negative record, 7 losses in a row or a 10R drawdown. An active strategy whose
@@ -109,15 +118,27 @@ npm run bot:docker          # = npm run bot:build && docker compose up -d --buil
 * Net als de echte markt ligt de bot stil van vrijdag 17:00 tot zondag 17:00 New Yorkse tijd.
 * Meldingen in het Nederlands: `NEONFX_LANG=nl`.
 
-### De terminal aan de bot koppelen
+### De terminal bij de bot (één rekening)
 
-Open de terminal op een computer die de bot kan bereiken (dezelfde machine, of via VPN/SSH-tunnel)
-met `npm run dev` en ga naar het tabblad **24/7-bot**. Vul het adres in (standaard
-`http://127.0.0.1:8787`) en het token uit `data/neonfx-token.txt` (wordt bij de eerste start
-aangemaakt; of zet je eigen `NEONFX_TOKEN`). Je ziet dan equity-grafiek, posities, recente trades,
-strategieën, lessen, het lab en het log, en je kunt de autopilot en het lab van de bot aan- en
-uitzetten. De API (`/api/status`, `/api/control`) werkt alleen met het token. De gepubliceerde
-https-pagina kan geen gewone http-verbinding met je bot maken; gebruik daarvoor de lokale terminal.
+De bot serveert de terminal zelf op `http://127.0.0.1:8787/` (alleen op de machine van de bot).
+Die terminal is meteen verbonden, zonder adres of token: hij toont de koersen en **de rekening van
+de bot**. Posities, historie en prestaties zijn die van de bot, en wat je zelf via het orderticket
+doet gaat naar dezelfde rekening. Draait de bot op een server, open de pagina dan via een
+SSH-tunnel: `ssh -N -L 8787:127.0.0.1:8787 root@<server>` en ga naar http://localhost:8787.
+
+* **Trades**: alle trades per dag. Klik op een trade: de grafiek springt ernaartoe (instap, uitstap,
+  winstdoel en stop-loss, de signaalkaars en de indicator van de strategie zelf) en het paneel
+  *Waarom deze trade?* legt in gewone taal uit welke strategie het was, welke meetwaarden het
+  signaal gaven, wat het plan was en hoe het afliep. De bot legt die meetwaarden vast bij elke
+  instap (`/api/notes`).
+* **Autopilot 24/7**: de strategieën, lessen en het lab van de bot. Automatisch handelen staat
+  vast aan (`NEONFX_AUTO_LOCK=on`, standaard); zet het op `off` om het vanuit de terminal te kunnen
+  schakelen.
+* De **?**-knop rechtsboven toont wat waar staat.
+* De API (`/api/...`) werkt alleen met het token uit `data/neonfx-token.txt`; pagina's worden
+  alleen aan lokale hostnamen geserveerd. Zet de poort niet open naar internet.
+* De losse terminal (`npm run dev`) blijft een eigen oefenrekening in de browser; via het tabblad
+  **24/7-bot** kan die ook met adres en token naar een bot kijken.
 
 ### Echte koersen via OANDA (demo-account)
 
@@ -140,6 +161,28 @@ NEONFX_OANDA_MAX_UNITS=100000 # grootste order (1 lot)
   simulator en krijg je een melding.
 * Getest tegen een nagebootste OANDA-API volgens de officiële v20-documentatie; test het eerst
   een paar dagen op je demo-account.
+
+### Echte koersen via cTrader (demo-account)
+
+Werkt met een cTrader-demo-account bij een broker (bijvoorbeeld Pepperstone of IC Markets) en een
+app op https://openapi.ctrader.com (Applications → Add new app; Spotware keurt die eerst goed):
+
+```
+NEONFX_CTRADER_CLIENT_ID=<client id van je app>
+NEONFX_CTRADER_CLIENT_SECRET=<client secret>
+NEONFX_CTRADER_ACCESS_TOKEN=<access token uit de Sandbox/Playground>
+NEONFX_CTRADER_REFRESH_TOKEN=<refresh token>
+NEONFX_CTRADER_ACCOUNT=<rekeningnummer, optioneel: anders het eerste demo-account>
+```
+
+* De bot gebruikt dan de echte koersen, spreads en koershistorie van de broker. Hij blijft op zijn
+  eigen papieren rekening handelen; er gaan geen orders naar de broker.
+* Alleen demo-accounts en de demo-server: live-rekeningen worden geweigerd.
+* Tokens verlopen na ongeveer 30 dagen; de bot ververst ze zelf en bewaart ze in
+  `data/ctrader-tokens.json`. Valt de verbinding weg, dan verbindt hij opnieuw en pauzeert het
+  handelen tot er weer koersen zijn.
+* Op een server: `deploy/neonfx-set-ctrader` vraagt de waarden en zet ze in `.env` (zie
+  `deploy/README.md` voor de serverinstallatie, back-ups en updates).
 
 ### Taal
 
@@ -167,6 +210,11 @@ Tokens worden alleen uit de omgeving gelezen en nooit gelogd. Zet ze niet in git
   `NEONFX_MODE` (`explore`/`strict`), `NEONFX_RISK`, `NEONFX_TF` (`H1`/`H4`),
   `NEONFX_LAB_DUTY` (0.1–1, aandeel CPU-tijd voor het lab), `NEONFX_PORT`, `NEONFX_HOST`,
   `NEONFX_DATA`.
+* Sneller data verzamelen: `NEONFX_MAX_STRATEGIES` (strategieën tegelijk, standaard 3),
+  `NEONFX_MAX_OPEN` (open posities van de autopilot, standaard 6) en `NEONFX_MAX_PER_CCY`
+  (posities per valuta, standaard 3). Meer strategieën tegelijk geeft meer trades; elke strategie
+  houdt zijn eigen regels en begint op proef met klein risico. De risk guard (maximaal aantal
+  posities, dagelijkse verlieslimiet) blijft gelden.
 
 De bot handelt met papiergeld op de gesimuleerde feed. Er gaan geen echte orders naar een broker.
 

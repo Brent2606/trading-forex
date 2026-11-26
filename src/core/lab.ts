@@ -87,9 +87,23 @@ export interface LabConfig {
   hofSize: number;
   commissionPerLot: number;
   minTrades: number;
+  /**
+   * Rank on the cautious SQN and only rank strategies with enough validation trades
+   * (default on). Off gives the plain SQN ranking, kept for comparison.
+   */
+  cautious?: boolean;
 }
 
-export const DEFAULT_LAB: LabConfig = { popSize: 24, hofSize: 12, commissionPerLot: 3.5, minTrades: 30 };
+export const DEFAULT_LAB: LabConfig = { popSize: 24, hofSize: 12, commissionPerLot: 3.5, minTrades: 30, cautious: true };
+
+/**
+ * A strategy needs this many validation trades before it can be validated or ranked. On
+ * 2.8 years of real hourly data, strategies picked with 40+ validation trades held up clearly
+ * better on the unseen holdout than those picked with 20, and they trade more often.
+ */
+export const MIN_VAL_TRADES = 40;
+/** Trades that count towards the ranking's sample-size factor (the plain SQN stops at 100). */
+export const RANK_TRADES_CAP = 400;
 
 export function convFn(c: QuoteConv): (p: number) => number {
   if (c.kind === 'inverse') return (p) => 1 / p;
@@ -128,6 +142,22 @@ export function segmentStats(rs: readonly number[]): SegmentStats {
 }
 
 /**
+ * SQN for ranking: the sample plus one hypothetical full loss (−1R), with the sample-size
+ * factor running up to RANK_TRADES_CAP trades.
+ *
+ * A handful of trades that never lost has almost no spread, so its plain SQN explodes (ten
+ * wins of 0.29R score 200) and the search drifts to "wide stop, tiny target" rules whose rare
+ * big loss is simply not in the sample yet. Assuming the next trade is a full loss keeps those
+ * honest while barely moving a strategy that already has losses on record.
+ */
+export function cautiousSqn(rs: readonly number[]): number {
+  if (!rs.length) return 0;
+  const s = segmentStats([...rs, -1]);
+  // More trades are more evidence (and more activity): let them count up to RANK_TRADES_CAP.
+  return s.sdR > 0 ? (s.meanR / s.sdR) * Math.sqrt(Math.min(s.n, RANK_TRADES_CAP)) : 0;
+}
+
+/**
  * validated: positive in training and validation with a decent profit factor.
  * robust: also positive on the untouched holdout, with SQN ≥ 1, and (with 3+ pairs)
  * profitable out-of-sample on at least 60% of the pairs, so one lucky trend can't carry it.
@@ -139,7 +169,7 @@ export function gates(
   breadth = NaN,
   breadthN = 0,
 ): { validated: boolean; robust: boolean } {
-  const validated = train.meanR > 0 && val.meanR > 0 && val.n >= 20 && val.pf >= 1.1;
+  const validated = train.meanR > 0 && val.meanR > 0 && val.n >= MIN_VAL_TRADES && val.pf >= 1.1;
   const broad = breadthN < 3 || breadth >= 0.6;
   const robust = validated && hold.meanR > 0 && hold.n >= 20 && val.sqn >= 1 && train.sqn >= 1 && broad;
   return { validated, robust };
@@ -232,8 +262,12 @@ export function evaluateGenome(g: Genome, datasets: readonly Dataset[], cfg: Lab
   const val = segmentStats(seg.val);
   const hold = segmentStats(seg.hold);
   const penalty = train.n < cfg.minTrades ? (cfg.minTrades - train.n) * 0.08 : 0;
-  const fitness = train.sqn - penalty;
-  const score = train.n < 20 || val.n < 10 ? -Infinity : Math.min(train.sqn, val.sqn);
+  const cautious = cfg.cautious !== false;
+  const tSqn = cautious ? cautiousSqn(seg.train) : train.sqn;
+  const vSqn = cautious ? cautiousSqn(seg.val) : val.sqn;
+  const fitness = tSqn - penalty;
+  // Only strategies that can be validated are ranked, so the leaderboard holds deployable ones.
+  const score = train.n < 20 || val.n < (cautious ? MIN_VAL_TRADES : 10) ? -Infinity : Math.min(tSqn, vSqn);
   const counted = seg.perSet.filter((p) => p.oosN >= 3);
   const breadthN = counted.length;
   const breadth = breadthN ? counted.filter((p) => p.oosSum > 0).length / breadthN : NaN;
@@ -286,6 +320,8 @@ export class Lab {
     this.stats.dataLabel = label;
     this.stats.bars = this.datasets.reduce((a, d) => a + d.candles.length, 0);
     this.stats.dataVersion++;
+    // Scores on other data don't compare: the best score restarts with the leaderboard re-check.
+    this.stats.bestScore = -Infinity;
   }
 
   hasData(): boolean {
@@ -301,7 +337,6 @@ export class Lab {
     if (stats) {
       this.stats.generation = stats.generation ?? 0;
       this.stats.tested = stats.tested ?? 0;
-      this.stats.bestScore = stats.bestScore ?? -Infinity;
       this.stats.lastImprovement = stats.lastImprovement ?? 0;
     }
     for (const e of this.hofList) this.seen.add(e.id);

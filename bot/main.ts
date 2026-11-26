@@ -14,6 +14,9 @@
  *   NEONFX_LAB       on|off (on)                        NEONFX_MODE  explore|strict (explore)
  *   NEONFX_RISK      risk % per trade (0.5)             NEONFX_TF    H1|H4 (H1)
  *   NEONFX_LAB_DUTY  share of CPU time for the lab, 0.1–1 (1)
+ *   NEONFX_MAX_STRATEGIES  strategies trading at once, 1–12 (3)
+ *   NEONFX_MAX_OPEN        autopilot positions open at once, 1–20 (6)
+ *   NEONFX_MAX_PER_CCY     autopilot positions per currency, 1–8 (3)
  * Put real OHLC CSV exports in <data>/history/ and the lab researches on those instead.
  * Notifications (Telegram, Discord, Slack, ntfy, webhook): see bot/notify.ts and the README.
  */
@@ -23,7 +26,7 @@ import { gunzipSync, gzipSync } from 'node:zlib';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { freshState, parseState, TradingEngine, type EngineEvent } from '../src/core/account';
-import { Autopilot, freshAutopilotState, liveMean, parseAutopilotState, type ApLogKind, type Lesson } from '../src/core/autopilot';
+import { Autopilot, DEFAULT_AUTOPILOT, freshAutopilotState, liveMean, parseAutopilotState, type ApLogKind, type Lesson } from '../src/core/autopilot';
 import { parseCsv } from '../src/core/csv';
 import { csvDataset, marketDatasets } from '../src/core/datasets';
 import { escapeHtml, money, moneySigned } from '../src/core/format';
@@ -295,6 +298,14 @@ async function main(): Promise<void> {
   if (env.NEONFX_MODE === 'strict' || env.NEONFX_MODE === 'explore') apState.config.mode = env.NEONFX_MODE;
   if (env.NEONFX_RISK && Number(env.NEONFX_RISK) > 0) apState.config.riskPct = Math.min(2, Number(env.NEONFX_RISK));
   if (env.NEONFX_TF === 'H1' || env.NEONFX_TF === 'H4') apState.config.tf = env.NEONFX_TF;
+  // More strategies at once = more trades = data sooner; each strategy keeps its own rules.
+  const intEnv = (v: string | undefined, min: number, max: number, def: number) => {
+    const n = Math.round(Number(v));
+    return v && Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : def;
+  };
+  apState.config.maxDeployments = intEnv(env.NEONFX_MAX_STRATEGIES, 1, 12, DEFAULT_AUTOPILOT.maxDeployments);
+  apState.config.maxOpen = intEnv(env.NEONFX_MAX_OPEN, 1, 20, DEFAULT_AUTOPILOT.maxOpen);
+  apState.config.maxPerCurrency = intEnv(env.NEONFX_MAX_PER_CCY, 1, 8, DEFAULT_AUTOPILOT.maxPerCurrency);
 
   // ---- lab (in-process, time-sliced)
   let hof: Evaluation[] = [];
@@ -319,6 +330,8 @@ async function main(): Promise<void> {
     hof: saved.lab?.hof ?? [],
     stats: saved.lab?.stats ?? {},
     blacklist: apState.blacklist,
+    // A leaderboard three times the number of strategies, so there is always a choice.
+    hofSize: Math.max(12, apState.config.maxDeployments * 3),
   });
   let dataLabel = '';
   const refreshData = () => {
@@ -744,7 +757,7 @@ ${s.marketOpen ? '' : '<div style="color:#ffc23d">FX market closed for the weeke
     true,
   );
   log(
-    `Autopilot ${apState.config.enabled ? 'ON' : 'OFF'} (${apState.config.mode}, ${apState.config.riskPct}% risk, ${apState.config.tf}) · lab ${apState.config.lab ? 'ON' : 'OFF'} · ${engine.state.positions.length} open positions · balance ${money(engine.state.balance)}`,
+    `Autopilot ${apState.config.enabled ? 'ON' : 'OFF'} (${apState.config.mode}, ${apState.config.riskPct}% risk, ${apState.config.tf}, up to ${apState.config.maxDeployments} strategies / ${apState.config.maxOpen} positions) · lab ${apState.config.lab ? 'ON' : 'OFF'} · ${engine.state.positions.length} open positions · balance ${money(engine.state.balance)}`,
   );
 }
 

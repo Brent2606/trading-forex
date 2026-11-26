@@ -4,7 +4,7 @@ import { DEFAULT_LAB, Lab, validateLessonOnHistory, type Dataset, type Evaluatio
 
 /** Messages into the lab host (a Web Worker in the browser, in-process in the 24/7 bot). */
 export type LabIn =
-  | { type: 'init'; seed: number; commission: number; hof: Evaluation[]; stats: Partial<LabStats>; blacklist: string[] }
+  | { type: 'init'; seed: number; commission: number; hof: Evaluation[]; stats: Partial<LabStats>; blacklist: string[]; hofSize?: number }
   | { type: 'data'; datasets: Dataset[]; kind: 'sim' | 'real'; label: string }
   | { type: 'run'; on: boolean; duty?: number }
   | { type: 'ban'; ids: string[] }
@@ -51,7 +51,7 @@ export function createLabHost(post: (m: LabOut) => void, slice = 250): (m: LabIn
   return (m: LabIn) => {
     switch (m.type) {
       case 'init':
-        lab = new Lab(m.seed, { ...DEFAULT_LAB, commissionPerLot: m.commission });
+        lab = new Lab(m.seed, { ...DEFAULT_LAB, commissionPerLot: m.commission, ...(m.hofSize ? { hofSize: m.hofSize } : {}) });
         commission = m.commission;
         lab.restore(m.hof ?? [], m.stats);
         for (const id of m.blacklist ?? []) lab.ban(id);
