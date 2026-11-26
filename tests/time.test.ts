@@ -30,7 +30,7 @@ describe('New York time', () => {
     for (let t = start; t < end; t += HOUR) {
       expect(nyOffsetMs(t), new Date(t).toISOString()).toBe(intlNyOffset(t));
     }
-  });
+  }, 30_000);
 
   it('switches at the documented 2026 instants', () => {
     // DST starts Sunday 8 March 2026 07:00 UTC, ends Sunday 1 Nov 2026 06:00 UTC

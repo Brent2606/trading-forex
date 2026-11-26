@@ -39,6 +39,8 @@ export interface UiPrefs {
   weekendPractice: boolean;
   /** Give the desk (tabs) more height on large screens. */
   deskMax: boolean;
+  /** The Trades tab has been shown once (it opens first for a new visitor). */
+  tradesTab: boolean;
 }
 
 export const DEFAULT_PREFS: UiPrefs = {
@@ -53,6 +55,7 @@ export const DEFAULT_PREFS: UiPrefs = {
   tab: 'positions',
   weekendPractice: false,
   deskMax: false,
+  tradesTab: false,
 };
 
 export function loadPrefs(): UiPrefs {

@@ -1,4 +1,5 @@
 import type { AccountState, GuardSettings, OrderRequest } from './account';
+import type { TradeNote } from './explain';
 import type { Quote } from './rates';
 
 /** A candle as a compact array: [time, open, high, low, close, volume]. */
@@ -27,6 +28,16 @@ export interface LiveDump {
   historyFrom: number;
   /** Ids of positions the autopilot opened. */
   owned: number[];
+  /** Changes when a trade note was added: fetch /api/notes again. */
+  notesRev: number;
+}
+
+/** GET /api/notes: why each autopilot trade was taken, by position id. */
+export interface NotesDump {
+  rev: number;
+  notes: Record<string, TradeNote>;
+  /** Status of each strategy (deployment id): probation, active, benched or retired. */
+  status: Record<string, string>;
 }
 
 /** POST /api/engine: the terminal's manual actions on the bot's account. */

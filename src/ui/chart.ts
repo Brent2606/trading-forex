@@ -1,6 +1,6 @@
 import { heikinAshi, type Candle, type Timeframe } from '../core/candles';
 import { dateTime, monthYear, shortDate } from '../core/format';
-import { bollinger, ema, macd, rsi, stochastic, type BandsResult, type MacdResult, type StochResult } from '../core/indicators';
+import { bollinger, ema, highest, lowest, macd, rsi, stochastic, type BandsResult, type MacdResult, type StochResult } from '../core/indicators';
 import { tradingDayDate } from '../core/time';
 import { tr } from '../core/i18n';
 
@@ -27,6 +27,36 @@ export interface ChartMarker {
   price: number;
   dir: 'up' | 'down';
   color: string;
+  /** Short text drawn next to the marker (e.g. "IN", "OUT +$12"). */
+  label?: string;
+}
+
+/** Shows a strategy's own indicators instead of the default ones (used to explain a trade). */
+export interface ChartStudy {
+  rsi?: { period: number; lower: number; upper: number };
+  macd?: { fast: number; slow: number; signal: number };
+  /** Fast and slow EMA of a crossover strategy (replace EMA20 / EMA50). */
+  emas?: [number, number];
+  bb?: { period: number; mult: number };
+  /** Donchian channel: the highest high / lowest low of the prior N bars. */
+  channel?: number;
+  /** Trend-filter EMA (replaces EMA200). */
+  trend?: number;
+}
+
+/** One trade drawn as a box: green from entry to target, red from entry to stop. */
+export interface TradeZone {
+  t0: number;
+  /** Exit time; null while the trade is still open. */
+  t1: number | null;
+  entry: number;
+  exit: number | null;
+  sl: number | null;
+  tp: number | null;
+  /** Open time of the bar whose close gave the signal. */
+  signalT: number | null;
+  /** Names drawn next to the levels (already translated); null when price lines already name them. */
+  labels: { entry: string; sl: string; tp: string } | null;
 }
 
 interface Theme {
@@ -52,9 +82,17 @@ interface IndicatorCache {
   rsi: Float64Array;
   macd: MacdResult;
   stoch: StochResult;
+  chHi: Float64Array | null;
+  chLo: Float64Array | null;
 }
 
 const MONO = '"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace';
+/** A one-element view of a[i - 1] at index i (the channel a bar had to break). */
+const shiftAt = (a: Float64Array, i: number): Float64Array => {
+  const o = new Float64Array(i + 1).fill(NaN);
+  o[i] = a[i - 1];
+  return o;
+};
 const AXIS_W = 76;
 const AXIS_H = 22;
 const TOP = 6;
@@ -101,6 +139,7 @@ export class CandleChart {
   lower: LowerPane = 'rsi';
   lines: PriceLine[] = [];
   markers: ChartMarker[] = [];
+  zone: TradeZone | null = null;
   title = '';
   glow = true;
   /** Called when the user pans away from / back to the live edge. */
@@ -255,20 +294,98 @@ export class CandleChart {
     });
   }
 
+  private study: ChartStudy | null = null;
+
+  /** Switches the indicators to a strategy's own settings (null = back to the defaults). */
+  setStudy(s: ChartStudy | null): void {
+    if (JSON.stringify(s) === JSON.stringify(this.study)) return;
+    this.study = s;
+    this.ind = null;
+    this.request();
+  }
+
+  /** Overlays to draw: the user's choice, plus whatever the study needs. */
+  private get ov(): Overlays {
+    const s = this.study;
+    if (!s) return this.overlays;
+    return {
+      ...this.overlays,
+      ema20: s.emas ? true : this.overlays.ema20,
+      ema50: s.emas ? true : this.overlays.ema50,
+      ema200: s.trend ? true : this.overlays.ema200,
+      bb: s.bb ? true : this.overlays.bb,
+    };
+  }
+
+  private get low(): LowerPane {
+    return this.study?.rsi ? 'rsi' : this.study?.macd ? 'macd' : this.lower;
+  }
+
+  /** Periods of the three moving averages on screen. */
+  private get maN(): [number, number, number] {
+    const s = this.study;
+    return [s?.emas?.[0] ?? 20, s?.emas?.[1] ?? 50, s?.trend ?? 200];
+  }
+
   private indicators(): IndicatorCache {
     if (this.ind) return this.ind;
     const closes = new Float64Array(this.raw.length);
     for (let i = 0; i < this.raw.length; i++) closes[i] = this.raw[i].c;
+    const s = this.study;
+    const [m1, m2, m3] = this.maN;
+    const ch = s?.channel ? Math.round(s.channel) : 0;
     this.ind = {
-      ema20: ema(closes, 20),
-      ema50: ema(closes, 50),
-      ema200: ema(closes, 200),
-      bb: bollinger(closes, 20, 2),
-      rsi: rsi(closes, 14),
-      macd: macd(closes),
+      ema20: ema(closes, m1),
+      ema50: ema(closes, m2),
+      ema200: ema(closes, m3),
+      bb: bollinger(closes, s?.bb?.period ?? 20, s?.bb?.mult ?? 2),
+      rsi: rsi(closes, s?.rsi?.period ?? 14),
+      macd: s?.macd ? macd(closes, s.macd.fast, s.macd.slow, s.macd.signal) : macd(closes),
       stoch: stochastic(this.raw),
+      chHi: ch
+        ? highest(
+            this.raw.map((b) => b.h),
+            ch,
+          )
+        : null,
+      chLo: ch
+        ? lowest(
+            this.raw.map((b) => b.l),
+            ch,
+          )
+        : null,
     };
     return this.ind;
+  }
+
+  /** Index of the bar that contains time t (the last bar starting at or before t), or -1. */
+  private floorIndex(t: number): number {
+    let lo = 0;
+    let hi = this.bars.length - 1;
+    let at = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (this.bars[mid].t <= t) {
+        at = mid;
+        lo = mid + 1;
+      } else hi = mid - 1;
+    }
+    return at;
+  }
+
+  /** Scrolls and zooms so the period t0..t1 is in view with some bars around it. */
+  focus(t0: number, t1: number): void {
+    const i0 = this.floorIndex(t0);
+    if (i0 < 0) return;
+    const i1 = Math.max(i0, this.floorIndex(t1));
+    const plotW = Math.max(120, this.w - AXIS_W);
+    const want = i1 - i0 + 1 + 40;
+    this.barW = Math.min(18, Math.max(3, plotW / want));
+    const visible = plotW / this.barW;
+    this.follow = false;
+    this.setRight(i1 + Math.max(6, Math.min(18, visible * 0.25)));
+    this.onFollowChange?.(this.follow);
+    this.request();
   }
 
   private fmt(p: number): string {
@@ -307,7 +424,7 @@ export class CandleChart {
     if (this.follow) this.right = n - 1 + MARGIN_BARS;
 
     const plotW = w - AXIS_W;
-    const lowerH = this.lower !== 'none' ? Math.max(56, Math.round((h - AXIS_H - TOP) * 0.24)) : 0;
+    const lowerH = this.low !== 'none' ? Math.max(56, Math.round((h - AXIS_H - TOP) * 0.24)) : 0;
     const gap = lowerH ? 10 : 0;
     const pTop = TOP;
     const pBot = h - AXIS_H - lowerH - gap;
@@ -332,7 +449,7 @@ export class CandleChart {
         hi = Math.max(hi, b.h);
         lo = Math.min(lo, b.l);
       }
-      if (this.overlays.bb && !Number.isNaN(ind.bb.upper[i])) {
+      if (this.ov.bb && !Number.isNaN(ind.bb.upper[i])) {
         hi = Math.max(hi, ind.bb.upper[i]);
         lo = Math.min(lo, ind.bb.lower[i]);
       }
@@ -340,6 +457,17 @@ export class CandleChart {
     if (this.bid !== null && this.follow) {
       hi = Math.max(hi, this.bid);
       lo = Math.min(lo, this.bid);
+    }
+    const zone = this.zone;
+    const z0 = zone ? this.floorIndex(zone.t0) : -1;
+    const z1 = zone ? Math.max(z0, zone.t1 === null ? n - 1 : this.floorIndex(zone.t1)) : -1;
+    const zoneVisible = !!zone && z0 >= 0 && z1 >= from && z0 <= to;
+    if (zone && zoneVisible) {
+      for (const v of [zone.entry, zone.exit, zone.sl, zone.tp]) {
+        if (v === null) continue;
+        hi = Math.max(hi, v);
+        lo = Math.min(lo, v);
+      }
     }
     if (!Number.isFinite(hi) || !Number.isFinite(lo)) return;
     const span = hi - lo || hi * 0.001 || 1;
@@ -402,7 +530,7 @@ export class CandleChart {
     ctx.clip();
 
     // ---- volume
-    if (this.overlays.volume) {
+    if (this.ov.volume) {
       let vmax = 0;
       for (let i = from; i <= to; i++) vmax = Math.max(vmax, this.raw[i].v);
       if (vmax > 0) {
@@ -417,7 +545,7 @@ export class CandleChart {
     }
 
     // ---- Bollinger
-    if (this.overlays.bb) {
+    if (this.ov.bb) {
       ctx.beginPath();
       let started = false;
       for (let i = from; i <= to; i++) {
@@ -439,6 +567,60 @@ export class CandleChart {
       this.polyline(ind.bb.upper, from, to, x, y, withAlpha(th.accent, 0.6), 1);
       this.polyline(ind.bb.lower, from, to, x, y, withAlpha(th.accent, 0.6), 1);
       this.polyline(ind.bb.mid, from, to, x, y, withAlpha(th.accent, 0.35), 1, [3, 3]);
+    }
+
+    // ---- Donchian channel of the strategy being explained
+    if (ind.chHi && ind.chLo) {
+      const shift = (a: Float64Array) => {
+        const o = new Float64Array(a.length).fill(NaN);
+        for (let i = 1; i < a.length; i++) o[i] = a[i - 1];
+        return o;
+      };
+      this.polyline(shift(ind.chHi), from, to, x, y, withAlpha(th.cyan, 0.8), 1.2, [5, 3]);
+      this.polyline(shift(ind.chLo), from, to, x, y, withAlpha(th.cyan, 0.8), 1.2, [5, 3]);
+    }
+
+    // ---- the selected trade: signal bar, target zone (green) and stop zone (red)
+    if (zone && zoneVisible) {
+      const x0 = x(z0) - bw / 2;
+      const x1 = Math.max(x(z1) + bw / 2, x0 + Math.max(3 * bw, 26));
+      const ye = y(zone.entry);
+      if (zone.signalT !== null) {
+        const si = this.floorIndex(zone.signalT);
+        if (si >= 0) {
+          ctx.fillStyle = withAlpha(th.warn, 0.13);
+          ctx.fillRect(x(si) - bw / 2, pTop, bw, pBot - pTop);
+        }
+      }
+      if (zone.tp !== null) {
+        ctx.fillStyle = withAlpha(th.up, 0.14);
+        ctx.fillRect(x0, Math.min(ye, y(zone.tp)), x1 - x0, Math.abs(y(zone.tp) - ye));
+      }
+      if (zone.sl !== null) {
+        ctx.fillStyle = withAlpha(th.down, 0.14);
+        ctx.fillRect(x0, Math.min(ye, y(zone.sl)), x1 - x0, Math.abs(y(zone.sl) - ye));
+      }
+      ctx.strokeStyle = withAlpha(th.text, 0.55);
+      ctx.lineWidth = 1;
+      ctx.strokeRect(Math.round(x0) + 0.5, Math.round(Math.min(ye, y(zone.tp ?? zone.entry), y(zone.sl ?? zone.entry))) + 0.5, Math.round(x1 - x0), Math.round(Math.abs(y(zone.tp ?? zone.entry) - y(zone.sl ?? zone.entry))));
+      // Level names at the right edge of the box.
+      ctx.font = `700 10px ${MONO}`;
+      ctx.textAlign = 'left';
+      const tag = (text: string, price: number, col: string) => {
+        const tw = ctx.measureText(text).width;
+        const lx = Math.min(plotW - tw - 8, x1 + 5);
+        const ly = Math.min(pBot - 9, Math.max(pTop + 9, y(price)));
+        ctx.fillStyle = withAlpha(th.void, 0.85);
+        ctx.fillRect(lx - 3, ly - 7, tw + 6, 14);
+        ctx.fillStyle = col;
+        ctx.fillText(text, lx, ly);
+      };
+      if (zone.labels) {
+        if (zone.tp !== null) tag(`${zone.labels.tp} ${this.fmt(zone.tp)}`, zone.tp, th.up);
+        if (zone.sl !== null) tag(`${zone.labels.sl} ${this.fmt(zone.sl)}`, zone.sl, th.down);
+        tag(`${zone.labels.entry} ${this.fmt(zone.entry)}`, zone.entry, th.text);
+      }
+      ctx.font = `11px ${MONO}`;
     }
 
     // ---- price
@@ -510,13 +692,23 @@ export class CandleChart {
     }
 
     // ---- moving averages
-    if (this.overlays.ema200) this.polyline(ind.ema200, from, to, x, y, th.accent, 1.4);
-    if (this.overlays.ema50) this.polyline(ind.ema50, from, to, x, y, th.warn, 1.2);
-    if (this.overlays.ema20) this.polyline(ind.ema20, from, to, x, y, th.cyan, 1.2);
+    if (this.ov.ema200) this.polyline(ind.ema200, from, to, x, y, th.accent, 1.4);
+    if (this.ov.ema50) this.polyline(ind.ema50, from, to, x, y, th.warn, 1.2);
+    if (this.ov.ema20) this.polyline(ind.ema20, from, to, x, y, th.cyan, 1.2);
 
     // ---- markers (backtest trades)
+    if (zone && zoneVisible && zone.exit !== null) {
+      ctx.strokeStyle = withAlpha(th.text, 0.85);
+      ctx.lineWidth = 1.4;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(x(z0), y(zone.entry));
+      ctx.lineTo(x(z1), y(zone.exit));
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     for (const m of this.markers) {
-      const i = this.indexOf(m.t);
+      const i = this.floorIndex(m.t);
       if (i < from || i > to || i < 0) continue;
       const cx = x(i);
       const cy = y(m.price);
@@ -534,6 +726,21 @@ export class CandleChart {
       }
       ctx.closePath();
       ctx.fill();
+      if (m.label) {
+        ctx.font = `700 10.5px ${MONO}`;
+        const tw = ctx.measureText(m.label).width;
+        const ly = m.dir === 'up' ? cy + 3 + s * 1.4 + 10 : cy - 3 - s * 1.4 - 10;
+        const lx = Math.min(plotW - tw / 2 - 6, Math.max(tw / 2 + 6, cx));
+        ctx.fillStyle = withAlpha(th.void, 0.88);
+        ctx.fillRect(lx - tw / 2 - 4, ly - 8, tw + 8, 16);
+        ctx.strokeStyle = m.color;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(lx - tw / 2 - 4 + 0.5, ly - 8 + 0.5, tw + 7, 15);
+        ctx.fillStyle = m.color;
+        ctx.textAlign = 'center';
+        ctx.fillText(m.label, lx, ly);
+        ctx.font = `11px ${MONO}`;
+      }
     }
     ctx.restore();
 
@@ -670,10 +877,12 @@ export class CandleChart {
       xx += ctx.measureText(s).width + 10;
     };
     const val = (a: Float64Array) => (Number.isNaN(a[i]) ? '—' : this.fmt(a[i]));
-    if (this.overlays.ema20) put2(`EMA20 ${val(ind.ema20)}`, th.cyan);
-    if (this.overlays.ema50) put2(`EMA50 ${val(ind.ema50)}`, th.warn);
-    if (this.overlays.ema200) put2(`EMA200 ${val(ind.ema200)}`, th.accent);
-    if (this.overlays.bb) put2(`BB ${val(ind.bb.upper)} / ${val(ind.bb.lower)}`, th.accent);
+    const [m1, m2, m3] = this.maN;
+    if (this.ov.ema20) put2(`EMA${m1} ${val(ind.ema20)}`, th.cyan);
+    if (this.ov.ema50) put2(`EMA${m2} ${val(ind.ema50)}`, th.warn);
+    if (this.ov.ema200) put2(`EMA${m3} ${val(ind.ema200)}`, th.accent);
+    if (this.ov.bb) put2(`BB ${val(ind.bb.upper)} / ${val(ind.bb.lower)}`, th.accent);
+    if (ind.chHi && ind.chLo && i > 0) put2(`${tr('Channel')} ${val(shiftAt(ind.chHi, i))} / ${val(shiftAt(ind.chLo, i))}`, th.cyan);
     if (this.type === 'heikin') put2(tr('Heikin-Ashi bodies · OHLC shows real prices'), th.faint);
   }
 
@@ -698,7 +907,7 @@ export class CandleChart {
       ? Math.min(this.raw.length - 1, Math.max(0, Math.round(this.right + 0.5 - (plotW - hv.x) / this.barW)))
       : this.raw.length - 1;
     let title = '';
-    if (this.lower === 'macd') {
+    if (this.low === 'macd') {
       lo = Infinity;
       hi = -Infinity;
       for (let i = from; i <= to; i++) {
@@ -730,18 +939,21 @@ export class CandleChart {
       ctx.fillStyle = th.faint;
       ctx.textAlign = 'left';
       ctx.font = `10px ${MONO}`;
-      ctx.fillText(this.lower === 'macd' ? v.toFixed(this.digits) : String(v), plotW + 8, yy);
+      ctx.fillText(this.low === 'macd' ? v.toFixed(this.digits) : String(v), plotW + 8, yy);
     };
-    if (this.lower === 'rsi') {
-      const y70 = y(70);
+    if (this.low === 'rsi') {
+      const rs = this.study?.rsi;
+      const upper = rs?.upper ?? 70;
+      const lower = rs?.lower ?? 30;
+      const yUp = y(upper);
       ctx.fillStyle = withAlpha(th.accent, 0.08);
-      ctx.fillRect(0, y70, plotW, y(30) - y70);
-      hline(70, withAlpha(th.down, 0.5));
-      hline(30, withAlpha(th.up, 0.5));
+      ctx.fillRect(0, yUp, plotW, y(lower) - yUp);
+      hline(upper, withAlpha(th.down, rs ? 0.9 : 0.5));
+      hline(lower, withAlpha(th.up, rs ? 0.9 : 0.5));
       hline(50, th.grid);
       this.polyline(ind.rsi, from, to, x, y, th.accent, 1.4);
-      title = `RSI 14  ${Number.isNaN(ind.rsi[idx]) ? '—' : ind.rsi[idx].toFixed(1)}`;
-    } else if (this.lower === 'stoch') {
+      title = `RSI ${rs?.period ?? 14}  ${Number.isNaN(ind.rsi[idx]) ? '—' : ind.rsi[idx].toFixed(1)}`;
+    } else if (this.low === 'stoch') {
       hline(80, withAlpha(th.down, 0.5));
       hline(20, withAlpha(th.up, 0.5));
       this.polyline(ind.stoch.k, from, to, x, y, th.cyan, 1.3);
@@ -764,7 +976,8 @@ export class CandleChart {
       this.polyline(ind.macd.signal, from, to, x, y, th.warn, 1.1);
       const mv = ind.macd.macd[idx];
       const sv = ind.macd.signal[idx];
-      title = `MACD 12,26,9  ${Number.isNaN(mv) ? '—' : mv.toFixed(this.digits)}  SIG ${Number.isNaN(sv) ? '—' : sv.toFixed(this.digits)}`;
+      const ms = this.study?.macd;
+      title = `MACD ${ms ? `${ms.fast},${ms.slow},${ms.signal}` : '12,26,9'}  ${Number.isNaN(mv) ? '—' : mv.toFixed(this.digits)}  SIG ${Number.isNaN(sv) ? '—' : sv.toFixed(this.digits)}`;
     }
     ctx.restore();
     ctx.font = `10.5px ${MONO}`;
@@ -816,17 +1029,4 @@ export class CandleChart {
     ctx.fillText(text, xx + 6, yy + 0.5);
   }
 
-  /** Index of the bar with open time t (binary search), or -1. */
-  private indexOf(t: number): number {
-    let lo = 0;
-    let hi = this.bars.length - 1;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      const v = this.bars[mid].t;
-      if (v === t) return mid;
-      if (v < t) lo = mid + 1;
-      else hi = mid - 1;
-    }
-    return -1;
-  }
 }

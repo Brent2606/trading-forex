@@ -1,6 +1,7 @@
 import type { ClosedTrade, Position, TradingEngine } from './account';
 import type { Candle, Timeframe } from './candles';
 import { atr } from './indicators';
+import { explainEntry, rebuildEntry, type TradeNote } from './explain';
 import { ALL_SESSIONS, computeFeatures, contextAt, describeGenome, similarSignal, SESSION_NAMES, signalAt, VOL_NAMES, type Genome, type TradeContext } from './genome';
 import { findInstrument, getInstrument, INSTRUMENTS, lotsToUnits } from './instruments';
 import type { Evaluation } from './lab';
@@ -99,6 +100,8 @@ export interface AutopilotState {
   deployments: Deployment[];
   retired: Deployment[];
   owned: Record<string, { dep: string; ctx: TradeContext }>;
+  /** Why each autopilot trade was taken, by position id (newest NOTES_CAP kept). */
+  notes: Record<string, TradeNote>;
   journal: JournalEntry[];
   lessons: Lesson[];
   lastBar: Record<string, number>;
@@ -137,6 +140,7 @@ export const DEFAULT_AUTOPILOT: AutopilotConfig = {
 
 const COUNTABLE = new Set(['sl', 'tp', 'trail', 'signal', 'stopout', 'guard']);
 const JOURNAL_CAP = 600;
+const NOTES_CAP = 800;
 const LESSON_TTL = 21 * 86_400_000;
 const MAX_ACTIVE_LESSONS = 4;
 const SLICE = 900;
@@ -155,6 +159,7 @@ export function freshAutopilotState(config: Partial<AutopilotConfig> = {}): Auto
     deployments: [],
     retired: [],
     owned: {},
+    notes: {},
     journal: [],
     lessons: [],
     lastBar: {},
@@ -179,6 +184,7 @@ export function parseAutopilotState(raw: unknown): AutopilotState | null {
     config: { ...fresh.config, ...(s.config ?? {}), universe: universe.length ? universe : fresh.config.universe },
     retired: Array.isArray(s.retired) ? s.retired : [],
     owned: s.owned && typeof s.owned === 'object' ? s.owned : {},
+    notes: s.notes && typeof s.notes === 'object' ? s.notes : {},
     lessons: Array.isArray(s.lessons) ? s.lessons : [],
     lastBar: s.lastBar && typeof s.lastBar === 'object' ? s.lastBar : {},
     blacklist: Array.isArray(s.blacklist) ? s.blacklist : [],
@@ -434,7 +440,58 @@ export class Autopilot {
       }
       this.state.counters.orders++;
       this.state.owned[String(r.value.id)] = { dep: d.id, ctx };
+      this.addNote(r.value.id, {
+        dep: d.id,
+        desc: d.desc,
+        strategy: d.genome.strategy,
+        why: explainEntry(d.genome, slice, i, side, this.config.tf),
+        slPips,
+        tpPips,
+        riskPct: risk,
+      });
     }
+  }
+
+  /** Bumped whenever a note is added, so a remote terminal knows to fetch them again. */
+  notesRev = 0;
+
+  private addNote(positionId: number, note: TradeNote): void {
+    const notes = this.state.notes;
+    notes[String(positionId)] = note;
+    this.notesRev++;
+    const ids = Object.keys(notes);
+    if (ids.length > NOTES_CAP) {
+      ids.sort((a, b) => Number(a) - Number(b));
+      for (const id of ids.slice(0, ids.length - NOTES_CAP)) delete notes[id];
+    }
+  }
+
+  /**
+   * Writes notes for autopilot trades that have none yet (trades from before notes existed):
+   * the strategy is known from the journal, the readings are rebuilt from price history.
+   * Call once at start-up, while the price history is still the one the trades were taken on.
+   */
+  backfillNotes(): number {
+    const st = this.state;
+    const deps = new Map([...st.deployments, ...st.retired].map((d) => [d.id, d]));
+    const todo: { id: number; dep: string; symbol: string; side: 'buy' | 'sell'; openTime: number }[] = [];
+    for (const j of st.journal) todo.push({ id: j.positionId, dep: j.dep, symbol: j.symbol, side: j.side, openTime: j.openTime });
+    for (const p of this.deps.engine.state.positions) {
+      const own = st.owned[String(p.id)];
+      if (own) todo.push({ id: p.id, dep: own.dep, symbol: p.symbol, side: p.side, openTime: p.openTime });
+    }
+    let added = 0;
+    for (const t of todo) {
+      if (st.notes[String(t.id)]) continue;
+      const d = deps.get(t.dep);
+      if (!d) continue;
+      const inst = findInstrument(t.symbol);
+      const why = inst ? rebuildEntry(d.genome, this.deps.series(t.symbol, this.config.tf), t.openTime, t.side, this.config.tf, SLICE) : null;
+      const pips = (mult: number) => (why && inst && mult > 0 ? Math.round(((mult * why.atr) / inst.pip) * 10) / 10 : null);
+      this.addNote(t.id, { dep: d.id, desc: d.desc, strategy: d.genome.strategy, why, slPips: pips(d.genome.slAtr), tpPips: pips(d.genome.tpAtr), riskPct: null });
+      added++;
+    }
+    return added;
   }
 
   /** Portfolio-level checks before a new autopilot trade. */

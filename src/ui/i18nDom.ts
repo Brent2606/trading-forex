@@ -6,7 +6,8 @@ import { getLang, tr } from '../core/i18n';
  * restores them exactly.
  */
 const ATTRS = ['title', 'placeholder', 'aria-label'];
-const SKIP = 'script, style, textarea, code, .bot-log, .ts';
+// .no-tr: content the app already renders in the current language.
+const SKIP = 'script, style, textarea, code, .bot-log, .ts, .no-tr';
 const texts = new WeakMap<Text, { en: string; shown: string }>();
 const attrs = new WeakMap<Element, Record<string, { en: string; shown: string }>>();
 const seenText = new Set<WeakRef<Text>>();

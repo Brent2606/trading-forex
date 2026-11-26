@@ -143,7 +143,7 @@ describe('bot API for the terminal', () => {
         control: () => undefined,
         terminal: () => '<html><head></head><body>terminal</body></html>',
         market: () => ({ time: 1, label: 'SIM', real: false, open: true, quotes: [], candles: {} }),
-        live: (h) => ({ time: 1, label: 'SIM', real: false, open: true, quotes: [], state: {} as never, historyFrom: h, owned: [] }),
+        live: (h) => ({ time: 1, label: 'SIM', real: false, open: true, quotes: [], state: {} as never, historyFrom: h, owned: [], notesRev: 1 }),
         engine: (op) => {
           ops.push(op);
           return op.op === 'close' ? { ok: false, error: 'Position #9 not found' } : { ok: true };

@@ -17,12 +17,15 @@ import { LabClient } from './labClient';
 import { initBacktest, tfForBarMs } from './backtestPanel';
 import { CandleChart, type PriceLine } from './chart';
 import { loadPrefs, type App, type OrderIntent, type SoundKind, type ToastKind, type UiMarket } from './context';
-import type { LiveDump, MarketDump } from '../core/botTypes';
+import type { LiveDump, MarketDump, NotesDump } from '../core/botTypes';
 import { botGet, readBotLink, RemoteEngine, RemoteMarket, type BotLink } from './remote';
 import { initDesk } from './desk';
 import { $, pressSeg, priceHtml, setSigned, setText } from './dom';
 import { sizeOrder } from './orders';
 import { initTicket } from './ticket';
+import { initTrades, type NoteSource } from './tradesPanel';
+import { initHelp } from './help';
+import type { TradeNote } from '../core/explain';
 import { detectLang, getLang, setLang, tr, type Lang } from '../core/i18n';
 import { applyLang, startTranslation } from './i18nDom';
 
@@ -190,6 +193,11 @@ function start(market: UiMarket, state: ReturnType<typeof freshState>, bot: { li
   let configTimer: ReturnType<typeof setTimeout> | null = null;
   // The bot's autopilot is the only one: the browser autopilot tab gives way to the bot's.
   if (bot && prefs.tab === 'autopilot') prefs.tab = 'bot';
+  if (!prefs.tradesTab) {
+    // First visit since the Trades tab exists: start there.
+    prefs.tradesTab = true;
+    prefs.tab = 'trades';
+  }
   const alertsRaw = load<PriceAlert[]>('alerts');
   const alerts: PriceAlert[] = Array.isArray(alertsRaw)
     ? alertsRaw.filter((a) => a && INSTRUMENTS.some((i) => i.symbol === a.symbol) && typeof a.price === 'number')
@@ -391,6 +399,8 @@ function start(market: UiMarket, state: ReturnType<typeof freshState>, bot: { li
     desk.render();
     apPanel.render();
     botPanel.render();
+    trades.render();
+    help.render();
     renderTape();
     if (prefs.tab === 'performance') desk.renderPerformance();
     log(getLang() === 'nl' ? 'Taal: Nederlands' : 'Language: English', 'info');
@@ -654,6 +664,7 @@ function start(market: UiMarket, state: ReturnType<typeof freshState>, bot: { li
     if (tab === 'risk') desk.renderRisk();
     if (tab === 'autopilot') apPanel.render();
     if (tab === 'bot') botPanel.render();
+    if (tab === 'trades') trades.render();
     app.savePrefs();
   }
   tabs.addEventListener('click', (e) => {
@@ -894,6 +905,9 @@ function start(market: UiMarket, state: ReturnType<typeof freshState>, bot: { li
     if (apTab) apTab.hidden = true;
     const botTab = document.querySelector<HTMLElement>('#tabs button[data-tab="bot"]');
     if (botTab) botTab.innerHTML = `${tr('Autopilot 24/7')} <b id="cnt-bot">—</b>`;
+    const bar = $('tabs');
+    const first = ['trades', 'positions', 'bot', 'performance'].map((t) => bar.querySelector<HTMLElement>(`button[data-tab="${t}"]`));
+    for (const b of first.reverse()) if (b) bar.prepend(b);
   }
 
   // ---- modules
@@ -906,10 +920,23 @@ function start(market: UiMarket, state: ReturnType<typeof freshState>, bot: { li
       ? initAutopilotPanel(app, autopilot, lab)
       : { render() {}, tick() {}, setEnabled() {}, setLab() {}, csvAvailable() {}, currentHof: () => [] };
   const botPanel = initBotPanel(app, bot?.link ?? null);
+  // Why each trade was taken: from the bot (fetched when it changes) or the browser's own autopilot.
+  let botNotes: Record<string, TradeNote> = {};
+  let botDepStatus: Record<string, string> = {};
+  let notesRev = -1;
+  const noteSource: NoteSource = autopilot
+    ? {
+        get: (id) => autopilot!.state.notes[String(id)],
+        status: (dep) => autopilot!.state.deployments.find((d) => d.id === dep)?.status ?? (autopilot!.state.retired.some((d) => d.id === dep) ? 'retired' : undefined),
+      }
+    : { get: (id) => botNotes[String(id)], status: (dep) => botDepStatus[dep] };
+  const trades = initTrades(app, noteSource);
+  const help = initHelp(!!bot);
   let deskDirty = false;
 
   loadChart(true);
   setTab(prefs.tab);
+  trades.render();
   renderHeader();
   renderWatch(true);
   renderTape();
@@ -960,6 +987,17 @@ function start(market: UiMarket, state: ReturnType<typeof freshState>, bot: { li
         const d = await botGet<LiveDump>(bot.link, `/api/live?h=${remote.confirmed}`, 8000);
         remoteMarket.apply(d);
         if (remote.sync(d)) deskDirty = true;
+        if (d.notesRev !== notesRev) {
+          const want = d.notesRev;
+          void botGet<NotesDump>(bot.link, '/api/notes')
+            .then((n) => {
+              botNotes = n.notes;
+              botDepStatus = n.status;
+              notesRev = want;
+              trades.render();
+            })
+            .catch(() => undefined);
+        }
         if (fails >= 3) {
           toast('Bot connected', 'Prices and account are live again', 'ok');
           log('Connection to the 24/7 bot restored', 'ok');
@@ -1023,8 +1061,12 @@ function start(market: UiMarket, state: ReturnType<typeof freshState>, bot: { li
     if (engine.state.positions.length) accountDirty = true;
     if (deskDirty) {
       desk.render();
+      trades.render();
       deskDirty = false;
-    } else desk.tick();
+    } else {
+      desk.tick();
+      trades.tick();
+    }
 
     renderHeader();
     renderWatch();
@@ -1035,7 +1077,10 @@ function start(market: UiMarket, state: ReturnType<typeof freshState>, bot: { li
       chart.refresh();
     }
     chart.lines = chartLines();
-    chart.markers = app.marks && app.marks.key === app.chartKey() ? app.marks.markers : [];
+    const tc = trades.chart();
+    chart.zone = tc.zone;
+    chart.setStudy(tc.study);
+    chart.markers = app.marks && app.marks.key === app.chartKey() ? app.marks.markers : tc.markers;
     chart.request();
 
     slow++;

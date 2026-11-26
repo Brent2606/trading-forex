@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
-import type { BotControl, BotStatus, EngineOp, EngineOpResult, LiveDump, MarketDump } from '../src/core/botTypes';
+import type { BotControl, BotStatus, EngineOp, EngineOpResult, LiveDump, MarketDump, NotesDump } from '../src/core/botTypes';
 
 /**
  * HTTP routes of the bot.
@@ -14,6 +14,7 @@ import type { BotControl, BotStatus, EngineOp, EngineOpResult, LiveDump, MarketD
  *   GET  /api/status    status JSON for the terminal (token + CORS)
  *   GET  /api/market    prices and candle history (token)
  *   GET  /api/live?h=n  prices and the account, history from index n (token)
+ *   GET  /api/notes     why each autopilot trade was taken (token)
  *   POST /api/engine    manual trading actions on the bot's account (token)
  *   POST /api/control   {"auto": bool, "lab": bool} (token + CORS)
  * The token is sent as the `x-neonfx-token` header. Pages are only served to local host
@@ -28,6 +29,7 @@ export interface ApiDeps {
   terminal?(): string | null;
   market?(): MarketDump;
   live?(historyFrom: number): LiveDump;
+  notes?(): NotesDump;
   engine?(op: EngineOp): EngineOpResult;
 }
 
@@ -183,6 +185,7 @@ export function handleRequest(rq: IncomingMessage, rs: ServerResponse, deps: Api
   }
   if (rq.method === 'GET' && url === '/api/status') return json(rq, rs, 200, deps.status(), true);
   if (rq.method === 'GET' && url === '/api/market' && deps.market) return json(rq, rs, 200, deps.market(), true);
+  if (rq.method === 'GET' && url === '/api/notes' && deps.notes) return json(rq, rs, 200, deps.notes(), true);
   if (rq.method === 'GET' && url === '/api/live' && deps.live) {
     const h = Number(full.searchParams.get('h') ?? 0);
     return json(rq, rs, 200, deps.live(Number.isInteger(h) && h >= 0 ? h : 0), true);

@@ -44,6 +44,7 @@
           <span class="chip" id="guard-chip" title="Risk guard status">GUARD</span>
           <button type="button" class="chip chip-btn" id="auto-chip" title="Autopilot status. Click to open the Autopilot tab">AUTO OFF</button>
           <span class="clock" id="clock" title="Your local time, and UTC">--:--:--</span>
+          <button class="iconbtn help-btn" id="help-btn" type="button" title="What is where on this screen?">?</button>
           <button class="iconbtn" id="lang-toggle" type="button" title="Language: English. Click for Dutch">EN</button>
           <button class="iconbtn" id="fx-toggle" type="button" aria-pressed="true" title="Toggle glow and scanline effects">FX</button>
           <button class="iconbtn" id="sound-toggle" type="button" aria-pressed="true" title="Toggle sounds">SND</button>
@@ -101,6 +102,10 @@
 
       <!-- ============================== RIGHT RAIL ============================== -->
       <aside class="rail">
+        <section class="panel explain" id="explain" aria-label="Trade explanation" hidden>
+          <div class="ph">Why this trade? <button type="button" class="mini ex-close" id="explain-close" title="Close and return the chart to live">✕</button></div>
+          <div class="ex-body no-tr" id="explain-body"></div>
+        </section>
         <section class="panel ticket" aria-label="Order ticket">
           <div class="ph">Order ticket <span class="ph-note" id="tk-pair">EUR/USD</span></div>
           <div class="tk-body">
@@ -207,6 +212,7 @@
       <!-- ============================== DOCK ============================== -->
       <section class="panel dock" aria-label="Trading desk">
         <div class="tabs" role="tablist" id="tabs">
+          <button type="button" role="tab" data-tab="trades" class="tab-tr">Trades <b id="cnt-tr">0</b></button>
           <button type="button" role="tab" data-tab="autopilot" class="tab-ap">Autopilot <b id="cnt-ap">OFF</b></button>
           <button type="button" role="tab" data-tab="bot">24/7 Bot <b id="cnt-bot">—</b></button>
           <button type="button" role="tab" data-tab="positions">Positions <b id="cnt-pos">0</b></button>
@@ -307,6 +313,22 @@
                 </section>
               </div>
             </div>
+          </div>
+        </div>
+
+        <div class="tabpane" data-pane="trades" hidden>
+          <div class="pane-tools">
+            <span class="tr-hint no-tr" id="tr-hint">Click a trade to see it on the chart, with the reason it was taken.</span>
+            <span class="ph-note no-tr" id="tr-sum"></span>
+          </div>
+          <div class="scroll x">
+            <table class="tbl tr-tbl">
+              <thead>
+                <tr><th>Opened</th><th>Pair</th><th>Side</th><th>Strategy</th><th>Duration</th><th class="r">Result</th><th>Status</th></tr>
+              </thead>
+              <tbody id="tr-body" class="no-tr"></tbody>
+            </table>
+            <p class="empty" id="tr-empty">No trades yet. As soon as a strategy gives a signal, the trade appears here.</p>
           </div>
         </div>
 
@@ -521,6 +543,7 @@
       </footer>
     </div>
 
+    <div class="help no-tr" id="help" role="dialog" aria-modal="true" aria-labelledby="help-title" hidden></div>
     <div class="toasts" id="toasts" aria-live="assertive"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

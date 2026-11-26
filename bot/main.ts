@@ -42,7 +42,7 @@ import type { Candle, Timeframe } from '../src/core/candles';
 import type { MidLookup, Quote } from '../src/core/rates';
 import { handleRequest, loadOrCreateToken } from './api';
 import { CTraderMarket, type Tokens } from './ctrader';
-import type { BotControl, BotStatus, CandleRow, EngineOp, EngineOpResult, LiveDump, MarketDump } from '../src/core/botTypes';
+import type { BotControl, BotStatus, CandleRow, EngineOp, EngineOpResult, LiveDump, MarketDump, NotesDump } from '../src/core/botTypes';
 
 const env = process.env;
 const DATA = env.NEONFX_DATA ?? join(process.cwd(), 'data');
@@ -368,6 +368,11 @@ async function main(): Promise<void> {
       if (/^AUTOPILOT (deployed|promoted|demoted|benched|learned|upgrade)/.test(msg)) notifier.send(`NEONFX · ${msg.slice(10)}`, 'autopilot', true);
     },
   });
+  // Explanations for trades from before the bot recorded them (rebuilt from this price history).
+  const backfilled = autopilot.backfillNotes();
+  if (backfilled) log(`Trade notes: rebuilt the reasons for ${backfilled} earlier trade(s)`);
+  // A restart must look like a change to a terminal that is already open.
+  const notesBase = Date.now();
 
   engine.on((e: EngineEvent) => {
     if (e.type === 'open') {
@@ -653,8 +658,14 @@ ${s.marketOpen ? '' : '<div style="color:#ffc23d">FX market closed for the weeke
       state: { ...st, history: st.history.slice(historyFrom) },
       historyFrom,
       owned: Object.keys(autopilot.state.owned).map(Number),
+      notesRev: notesBase + autopilot.notesRev,
     };
   };
+  const notesDump = (): NotesDump => ({
+    rev: notesBase + autopilot.notesRev,
+    notes: autopilot.state.notes,
+    status: Object.fromEntries([...apState.retired.map((d) => [d.id, 'retired']), ...apState.deployments.map((d) => [d.id, d.status])]),
+  });
   const res = (r: { ok: boolean; error?: string }): EngineOpResult => (r.ok ? { ok: true } : { ok: false, error: r.error ?? 'Rejected' });
   const engineOp = (op: EngineOp): EngineOpResult => {
     let out: EngineOpResult;
@@ -696,7 +707,7 @@ ${s.marketOpen ? '' : '<div style="color:#ffc23d">FX market closed for the weeke
     return out;
   };
   createServer((rq, rs) =>
-    handleRequest(rq, rs, { token: access.token, status, page, control, terminal, market: marketDump, live, engine: engineOp }),
+    handleRequest(rq, rs, { token: access.token, status, page, control, terminal, market: marketDump, live, notes: notesDump, engine: engineOp }),
   )
     .on('error', (e) => log(`Status server: ${e.message}`, 'err'))
     .listen(PORT, HOST, () =>

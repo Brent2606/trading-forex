@@ -520,6 +520,16 @@ const NL: Record<string, string> = {
   "Prices from your 24/7 bot's simulator. It is not a live market feed.": 'Koersen uit de simulator van je 24/7-bot. Dit is geen live marktfeed.',
   'Auto-trading is off': 'Automatisch handelen staat uit',
   'Auto-trading: always on': 'Automatisch handelen: altijd aan',
+  // trades tab and trade explanation
+  Opened: 'Geopend',
+  Result: 'Resultaat',
+  'Why this trade?': 'Waarom deze trade?',
+  Duration: 'Duur',
+  'Click a trade to see it on the chart, with the reason it was taken.': 'Klik op een trade om hem op de grafiek te zien, met de reden waarom hij is genomen.',
+  'Trade explanation': 'Uitleg van de trade',
+  'Close and return the chart to live': 'Sluiten en de grafiek terug naar live',
+  'What is where on this screen?': 'Wat staat waar op dit scherm?',
+  'No trades yet. As soon as a strategy gives a signal, the trade appears here.': 'Nog geen trades. Zodra een strategie een signaal geeft, verschijnt de trade hier.',
 };
 
 const dur = (s: string) => s.replace(/(\d+)h/g, '$1u');

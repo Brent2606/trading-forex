@@ -157,6 +157,40 @@ describe('trading', () => {
     expect(engine.state.positions).toHaveLength(1);
   });
 
+  it('records why a trade was taken, and can rebuild that for older trades', () => {
+    const { ap, engine, m, setData } = setup();
+    ap.sync([evaluation(donchian)]);
+    ap.onTick();
+    setData({ EURUSD: series(401, true) });
+    m.t = T0 + 400 * H + 2000; // two seconds into the bar after the breakout
+    m.set('EURUSD', 1.1035, 1); // a fresh quote: a position's open time is its quote time
+    ap.onTick();
+    const p = engine.state.positions[0];
+    const note = ap.state.notes[String(p.id)];
+    expect(note).toMatchObject({ dep: genomeId(donchian), strategy: 'donchian', slPips: p.slPips, tpPips: p.tpPips, riskPct: 0.25 });
+    const why = note.why!;
+    expect(why).toMatchObject({ tf: 'H1', side: 'buy', barTime: T0 + 399 * H, slAtr: 1.5, tpAtr: 3 });
+    expect(why.signal.k).toBe('donchian');
+    if (why.signal.k === 'donchian') {
+      expect(why.close).toBeGreaterThan(why.signal.high); // closed above the prior 20-bar high
+      expect(why.signal.prevClose).toBeLessThanOrEqual(why.signal.high);
+    }
+    expect(ap.notesRev).toBe(1);
+
+    // A trade from before notes existed: the same readings come back from price history.
+    delete ap.state.notes[String(p.id)];
+    expect(ap.backfillNotes()).toBe(1);
+    expect(ap.state.notes[String(p.id)].why).toEqual(why);
+    expect(ap.state.notes[String(p.id)].slPips).toBe(p.slPips);
+    expect(ap.backfillNotes()).toBe(0);
+
+    // When history no longer shows the signal, no (wrong) readings are stored.
+    delete ap.state.notes[String(p.id)];
+    setData({ EURUSD: series(401, false) });
+    expect(ap.backfillNotes()).toBe(1);
+    expect(ap.state.notes[String(p.id)]).toMatchObject({ strategy: 'donchian', why: null });
+  });
+
   it('does nothing while disabled', () => {
     const { ap, engine, setData } = setup();
     ap.state.config.enabled = false;

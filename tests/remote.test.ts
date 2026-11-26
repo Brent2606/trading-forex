@@ -27,7 +27,7 @@ function quotes(shift: number) {
 }
 
 function live(state = freshState(), historyFrom = 0, owned: number[] = []): LiveDump {
-  return { time: T0 + 1000, label: 'SIM · test', real: false, open: true, quotes: quotes(0), state: JSON.parse(JSON.stringify(state)), historyFrom, owned };
+  return { time: T0 + 1000, label: 'SIM · test', real: false, open: true, quotes: quotes(0), state: JSON.parse(JSON.stringify(state)), historyFrom, owned, notesRev: 1 };
 }
 
 const link = { base: 'http://localhost:8787', token: 'token-123456789' };
