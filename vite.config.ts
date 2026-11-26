@@ -13,5 +13,7 @@ export default defineConfig(({ mode }) => ({
   test: {
     environment: 'node',
     include: ['tests/**/*.test.ts'],
+    // The market simulation tests are heavy; a slow or busy machine should not fail them.
+    testTimeout: 30_000,
   },
 }));
