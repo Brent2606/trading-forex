@@ -1,0 +1,33 @@
+#!/bin/bash
+# Stores the cTrader Open API credentials in /opt/neonfx/.env (root-only) and restarts the bot.
+echo "NEONFX · cTrader-demo koppelen. Plakken met Cmd+V, dan Enter."
+echo "Geheime waarden blijven onzichtbaar terwijl je plakt."
+echo
+read -r -p "1/5 Client ID: " CID
+read -r -s -p "2/5 Client Secret (onzichtbaar): " CSEC; echo
+read -r -s -p "3/5 Access token (onzichtbaar): " AT; echo
+read -r -s -p "4/5 Refresh token (onzichtbaar): " RT; echo
+read -r -p "5/5 Rekeningnummer van je demo-account (leeg = eerste demo-account): " ACC
+clean() { echo -n "$1" | tr -d "[:space:]"; }
+CID=$(clean "$CID"); CSEC=$(clean "$CSEC"); AT=$(clean "$AT"); RT=$(clean "$RT"); ACC=$(clean "$ACC")
+if [ ${#CID} -lt 5 ] || [ ${#CSEC} -lt 10 ] || [ ${#AT} -lt 10 ] || [ ${#RT} -lt 10 ]; then
+  echo "Een van de waarden ontbreekt of is te kort. Niets veranderd."; exit 1
+fi
+umask 077
+grep -v "^NEONFX_CTRADER_" /opt/neonfx/.env 2>/dev/null > /opt/neonfx/.env.new
+{
+  echo "NEONFX_CTRADER_CLIENT_ID=$CID"
+  echo "NEONFX_CTRADER_CLIENT_SECRET=$CSEC"
+  echo "NEONFX_CTRADER_ACCESS_TOKEN=$AT"
+  echo "NEONFX_CTRADER_REFRESH_TOKEN=$RT"
+  echo "NEONFX_CTRADER_ACCOUNT=$ACC"
+} >> /opt/neonfx/.env.new
+mv /opt/neonfx/.env.new /opt/neonfx/.env
+rm -f /opt/neonfx/data/ctrader-tokens.json
+cd /opt/neonfx && docker compose up -d >/dev/null 2>&1
+echo "Opgeslagen. De bot herstart en laadt koersgeschiedenis, dat duurt 1 tot 2 minuten..."
+for i in $(seq 1 24); do
+  sleep 5
+  if grep -qE "cTrader (connected|unavailable)" <(tail -20 /opt/neonfx/data/neonfx.log); then break; fi
+done
+grep -E "cTrader" /opt/neonfx/data/neonfx.log | tail -2 | cut -c1-220

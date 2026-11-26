@@ -1,0 +1,12 @@
+#!/bin/bash
+# Stores the OANDA practice token in /opt/neonfx/.env (root-only) and restarts the bot.
+read -r -s -p "Plak je OANDA practice-token en druk op Enter: " T; echo
+T=$(echo -n "$T" | tr -d "[:space:]")
+if [ ${#T} -lt 20 ]; then echo "Dat lijkt geen geldig token. Niets veranderd."; exit 1; fi
+umask 077
+grep -v "^NEONFX_OANDA_TOKEN=" /opt/neonfx/.env 2>/dev/null > /opt/neonfx/.env.new
+echo "NEONFX_OANDA_TOKEN=$T" >> /opt/neonfx/.env.new
+mv /opt/neonfx/.env.new /opt/neonfx/.env
+cd /opt/neonfx && docker compose up -d >/dev/null 2>&1
+echo "Opgeslagen. Bot herstart, even geduld..."; sleep 20
+grep -E "OANDA" /opt/neonfx/data/neonfx.log | tail -2

@@ -1,0 +1,6 @@
+#!/bin/sh
+# Weekly refresh of the real hourly history the strategy lab researches on.
+mkdir -p /opt/neonfx-dl
+docker run --rm -v /opt/neonfx/scripts:/s:ro -v /opt/neonfx-dl:/dl -w /dl node:22-alpine node /s/fetch-history.mjs /dl/out >/var/log/neonfx-history.log 2>&1 \
+  && cp /opt/neonfx-dl/out/*.csv /opt/neonfx/data/history/ && chown -R 1000:1000 /opt/neonfx/data/history \
+  && docker restart neonfx-bot >/dev/null 2>&1

@@ -1,0 +1,5 @@
+#!/bin/sh
+# Daily backup of the bot state (keeps 14 days). History CSVs are re-downloadable and skipped.
+mkdir -p /opt/neonfx-backups
+tar --exclude=data/history -czf /opt/neonfx-backups/neonfx-data-$(date -u +%Y%m%d).tar.gz -C /opt/neonfx data
+find /opt/neonfx-backups -name "neonfx-data-*.tar.gz" -mtime +14 -delete

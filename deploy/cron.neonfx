@@ -1,0 +1,5 @@
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+*/5 * * * * root /usr/local/bin/neonfx-watchdog
+30 3 * * * root /usr/local/bin/neonfx-backup
+0 6 * * 6 root /usr/local/bin/neonfx-history
