@@ -39,6 +39,7 @@ import { freshMirrorState, OandaClient, OandaMarket, OandaMirror, resolveBaseUrl
 import type { Candle, Timeframe } from '../src/core/candles';
 import type { MidLookup, Quote } from '../src/core/rates';
 import { handleRequest, loadOrCreateToken } from './api';
+import { CTraderMarket, type Tokens } from './ctrader';
 import type { BotControl, BotStatus } from '../src/core/botTypes';
 
 const env = process.env;
@@ -163,6 +164,26 @@ interface BotMarket {
 
 const maskId = (id: string) => id.replace(/\d(?=\d{3})/g, '•');
 
+// ---- cTrader tokens: the environment gives the first pair; refreshed pairs are kept on disk.
+const CTRADER_TOKENS_FILE = join(DATA, 'ctrader-tokens.json');
+function loadCtraderTokens(): Tokens | null {
+  try {
+    const t = JSON.parse(readFileSync(CTRADER_TOKENS_FILE, 'utf8')) as Tokens & { seedRefresh?: string };
+    // A new refresh token in the environment (re-authorised by hand) wins over the stored pair.
+    const envRefresh = env.NEONFX_CTRADER_REFRESH_TOKEN;
+    if (t.accessToken && t.refreshToken && (!envRefresh || envRefresh === t.seedRefresh)) return t;
+  } catch {
+    /* none stored yet */
+  }
+  if (!env.NEONFX_CTRADER_ACCESS_TOKEN || !env.NEONFX_CTRADER_REFRESH_TOKEN) return null;
+  return { accessToken: env.NEONFX_CTRADER_ACCESS_TOKEN, refreshToken: env.NEONFX_CTRADER_REFRESH_TOKEN, expiresAt: 0 };
+}
+function saveCtraderTokens(t: Tokens): void {
+  const tmp = `${CTRADER_TOKENS_FILE}.tmp`;
+  writeFileSync(tmp, JSON.stringify({ ...t, seedRefresh: env.NEONFX_CTRADER_REFRESH_TOKEN ?? '' }), { mode: 0o600 });
+  renameSync(tmp, CTRADER_TOKENS_FILE);
+}
+
 async function main(): Promise<void> {
   const saved = loadSaved();
   log(`NEONFX bot starting · data ${DATA}`);
@@ -189,9 +210,33 @@ async function main(): Promise<void> {
       notifier.send(`NEONFX · OANDA unavailable: ${brokerError}. Running on the simulator instead.`, 'broker', true);
     }
   }
+  // ---- price source: cTrader demo account (real broker prices)
+  let ctrader: CTraderMarket | null = null;
+  if (!oanda && env.NEONFX_CTRADER_CLIENT_ID && env.NEONFX_CTRADER_CLIENT_SECRET) {
+    try {
+      const tokens = loadCtraderTokens();
+      if (!tokens) throw new Error('No cTrader tokens: set NEONFX_CTRADER_ACCESS_TOKEN and NEONFX_CTRADER_REFRESH_TOKEN');
+      log('Connecting to cTrader demo account: loading real price history (this takes a minute)...');
+      ctrader = await CTraderMarket.create({
+        clientId: env.NEONFX_CTRADER_CLIENT_ID,
+        clientSecret: env.NEONFX_CTRADER_CLIENT_SECRET,
+        tokens,
+        account: env.NEONFX_CTRADER_ACCOUNT,
+        url: env.NEONFX_CTRADER_URL,
+        saveTokens: saveCtraderTokens,
+        log: (m) => log(m, 'warn'),
+      });
+      log(`cTrader connected (${ctrader.accountLabel}): real prices and ${ctrader.candles.EURUSD.H1.length} hourly bars per pair`, 'ok');
+    } catch (e) {
+      brokerError = e instanceof Error ? e.message : String(e);
+      log(`cTrader unavailable: ${brokerError}. Falling back to the simulator`, 'err');
+      notifier.send(`NEONFX · cTrader unavailable: ${brokerError}. Running on the simulator instead.`, 'broker', true);
+    }
+  }
   let market: BotMarket;
-  const snap = oanda ? null : loadMarketSnapshot();
+  const snap = oanda || ctrader ? null : loadMarketSnapshot();
   if (oanda) market = oanda.market;
+  else if (ctrader) market = ctrader;
   else {
     const seed = snap ? snap.seed : await chooseSeed(saved);
     const s = new MarketSim(seed, Date.now(), randomSeed(), snap ?? undefined);
@@ -488,9 +533,11 @@ async function main(): Promise<void> {
             openTrades: mirror?.openTrades ?? 0,
             error: oanda.market.error || mirror?.error || '',
           }
-        : brokerError
-          ? { connected: false, label: 'OANDA unavailable', mirror: false, nav: null, openTrades: 0, error: brokerError }
-          : null,
+        : ctrader
+          ? { connected: !ctrader.error, label: `${ctrader.label} · prices only`, mirror: false, nav: null, openTrades: 0, error: ctrader.error }
+          : brokerError
+            ? { connected: false, label: env.NEONFX_CTRADER_CLIENT_ID ? 'cTrader unavailable' : 'OANDA unavailable', mirror: false, nav: null, openTrades: 0, error: brokerError }
+            : null,
       log: recent.slice(-40),
     };
   };
@@ -552,6 +599,7 @@ ${s.marketOpen ? '' : '<div style="color:#ffc23d">FX market closed for the weeke
     persist();
     if (sim) saveMarketSnapshot(sim);
     oanda?.market.stop();
+    ctrader?.stop();
     notifier.send(`NEONFX bot stopped (${sig}). Equity ${money(engine.metrics().equity)}. State saved.`, 'stop', true);
     await notifier.flush(8000);
     process.exit(0);
