@@ -1,14 +1,13 @@
 import type { TradingEngine } from '../core/account';
 import { findInstrument, lotsToUnits, MAX_LOTS, MIN_LOTS } from '../core/instruments';
-import type { MarketSim } from '../core/market';
 import { pipValuePerLot } from '../core/rates';
 import { lotsForRisk } from '../core/risk';
-import type { OrderIntent } from './context';
+import type { OrderIntent, UiMarket } from './context';
 
 export type Sized = { ok: true; units: number; lots: number } | { ok: false; error: string };
 
 /** Turns lots or risk-% into units. Risk sizing uses the stop (or trailing) distance. */
-export function sizeOrder(engine: TradingEngine, market: MarketSim, o: OrderIntent): Sized {
+export function sizeOrder(engine: TradingEngine, market: UiMarket, o: OrderIntent): Sized {
   const inst = findInstrument(o.symbol);
   if (!inst) return { ok: false, error: `Unknown pair ${o.symbol}` };
   if (o.lots !== undefined) {

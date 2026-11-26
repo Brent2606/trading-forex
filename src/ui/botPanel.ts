@@ -6,6 +6,7 @@ import { load, save } from '../core/storage';
 import { $, setText } from './dom';
 import type { App } from './context';
 import { drawCurve } from './minicharts';
+import type { BotLink } from './remote';
 
 interface Saved {
   url: string;
@@ -19,16 +20,34 @@ const POLL_MS = 5000;
  * The "24/7 Bot" tab: a remote view of the headless bot through its token-protected API.
  * The bot must be reachable from this browser (same machine, VPN or SSH tunnel).
  */
-export function initBotPanel(app: App): { render(): void } {
+export function initBotPanel(app: App, link: BotLink | null = null): { render(): void; setLab(on: boolean): void } {
   const urlIn = $<HTMLInputElement>('bot-url');
   const tokenIn = $<HTMLInputElement>('bot-token');
   const stateEl = $('bot-state');
   const view = $('bot-view');
   const autoIn = $<HTMLInputElement>('bot-auto');
   const labIn = $<HTMLInputElement>('bot-lab');
-  const saved = load<Saved>('bot');
+  const saved = link ? null : load<Saved>('bot');
   if (saved?.url) urlIn.value = saved.url;
   if (saved?.token) tokenIn.value = saved.token;
+  if (link) {
+    // Served by the bot: connected automatically, no address or token to fill in.
+    urlIn.value = link.base;
+    tokenIn.value = link.token;
+    $('bot-form').hidden = true;
+    // Positions and trades have their own tabs in bot mode.
+    for (const id of ['bot-pos', 'bot-trades']) {
+      const wrap = $(id).closest<HTMLElement>('.scroll');
+      if (wrap) {
+        wrap.hidden = true;
+        const h = wrap.previousElementSibling as HTMLElement | null;
+        if (h?.classList.contains('mini-h')) h.hidden = true;
+      }
+    }
+    $('auto-chip').addEventListener('click', () => app.setTab('bot'));
+    const autoLabel = autoIn.nextElementSibling;
+    if (autoLabel) autoLabel.textContent = 'Auto-trading: always on';
+  }
   let timer: ReturnType<typeof setInterval> | null = null;
   let last: BotStatus | null = null;
   let connected = false;
@@ -38,6 +57,14 @@ export function initBotPanel(app: App): { render(): void } {
   function note(): void {
     const page = location.protocol;
     const nl = getLang() === 'nl';
+    if (link) {
+      const html = nl
+        ? 'Je bot draait 24/7 op je server en handelt automatisch; automatisch handelen staat altijd aan. Hieronder zie je welke strategieën hij gebruikt, wat hij leert en wat het lab zoekt. Zijn trades staan bij <b>Posities</b> en <b>Historie</b>.'
+        : 'Your bot runs 24/7 on your server and trades automatically; auto-trading is always on. Below: the strategies it uses, what it learned and what the lab is searching. Its trades are under <b>Positions</b> and <b>History</b>.';
+      const el = $('bot-note');
+      if (el.innerHTML !== html) el.innerHTML = html;
+      return;
+    }
     const parts = [
       nl
         ? 'Eenvoudig overzicht van je bot: open <a href="' + escapeHtml(base()) + '/" target="_blank" rel="noopener">' + escapeHtml(base()) + '</a> (geen token nodig). Dit tabblad toont de 24/7-bot zonder browser (<code>npm run bot</code> of Docker) en laat je de autopilot en het lab ervan aan- en uitzetten. Het token staat in <code>data/neonfx-token.txt</code> op de bot-machine en wordt na verbinden in deze browser bewaard.'
@@ -90,7 +117,7 @@ export function initBotPanel(app: App): { render(): void } {
 
   function start(): void {
     stop();
-    save('bot', { url: base(), token: tokenIn.value.trim(), connected: true } satisfies Saved);
+    if (!link) save('bot', { url: base(), token: tokenIn.value.trim(), connected: true } satisfies Saved);
     $('bot-connect').hidden = true;
     $('bot-disconnect').hidden = false;
     setText(stateEl, 'Connecting...');
@@ -151,6 +178,13 @@ export function initBotPanel(app: App): { render(): void } {
     if (!s) return;
     view.hidden = false;
     setText($('cnt-bot'), s.autopilot.enabled ? 'ON' : 'OFF');
+    if (link) {
+      const n = s.autopilot.deployments.filter((d) => d.status === 'active' || d.status === 'probation').length;
+      const chip = $('auto-chip');
+      setText(chip, s.autopilot.enabled ? `AUTO 24/7 · ${n}` : 'AUTO OFF');
+      chip.className = `chip chip-btn ${s.autopilot.enabled ? 'auto-on' : ''}`;
+      chip.title = s.autopilot.enabled ? `The bot trades automatically with ${n} strategies` : 'Auto-trading is off';
+    }
     if (app.prefs.tab !== 'bot') return;
     autoIn.checked = s.autopilot.enabled;
     // The bot keeps auto-trading locked on: show it, but don't offer a switch that does nothing.
@@ -158,7 +192,10 @@ export function initBotPanel(app: App): { render(): void } {
     autoIn.closest('label')?.setAttribute('title', s.summary?.autoLocked ? (getLang() === 'nl' ? 'Staat altijd aan op de server' : 'Always on (locked on the server)') : '');
     labIn.checked = s.lab.running;
     const up = s.uptimeSec >= 86400 ? `${Math.floor(s.uptimeSec / 86400)}d ${Math.floor((s.uptimeSec % 86400) / 3600)}h` : `${Math.floor(s.uptimeSec / 3600)}h ${Math.floor((s.uptimeSec % 3600) / 60)}m`;
-    setText($('bot-meta'), `${s.feed} · ${s.marketOpen ? 'market open' : 'market closed'} · up ${up} · ${s.autopilot.mode}, ${s.autopilot.timeframe}`);
+    setText(
+      $('bot-meta'),
+      link ? `${s.feed} · ${s.marketOpen ? 'market open' : 'market closed'}` : `${s.feed} · ${s.marketOpen ? 'market open' : 'market closed'} · up ${up} · ${s.autopilot.mode}, ${s.autopilot.timeframe}`,
+    );
     const a = s.account;
     const sign = (v: number) => (v > 0 ? 'pos' : v < 0 ? 'neg' : '');
     const tile = (k: string, v: string, cls = '', sub = '') =>
@@ -225,6 +262,6 @@ export function initBotPanel(app: App): { render(): void } {
   }
 
   note();
-  if (saved?.connected && saved.token) start();
-  return { render };
+  if (link || (saved?.connected && saved.token)) start();
+  return { render, setLab: (on: boolean) => void control({ lab: on }) };
 }

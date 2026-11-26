@@ -4,6 +4,8 @@
 FROM node:22-alpine
 WORKDIR /app
 COPY dist-bot/neonfx-bot.mjs ./neonfx-bot.mjs
+# The terminal, served by the bot at / and connected to its account.
+COPY dist-single/index.html ./terminal.html
 ENV NODE_ENV=production \
     NEONFX_DATA=/app/data \
     NEONFX_HOST=0.0.0.0 \

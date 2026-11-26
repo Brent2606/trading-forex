@@ -493,6 +493,33 @@ const NL: Record<string, string> = {
   'Autopilot switched OFF from the terminal': 'Autopilot UIT gezet vanuit de terminal',
   'Language: English. Click for Dutch': 'Taal: Engels. Klik voor Nederlands',
   'Language: Nederlands. Click for English': 'Taal: Nederlands. Klik voor Engels',
+  // bot mode (terminal served by the 24/7 bot)
+  'Autopilot 24/7': 'Autopilot 24/7',
+  '> CONNECTING TO YOUR 24/7 BOT ...': '> VERBINDEN MET JE 24/7-BOT ...',
+  '  BOT NOT REACHABLE YET · RETRYING EVERY 5 SECONDS ...': '  BOT NOG NIET BEREIKBAAR · NIEUWE POGING ELKE 5 SECONDEN ...',
+  '> THE BOT TRADES 24/7. YOU SEE AND TRADE THE SAME ACCOUNT.': '> DE BOT HANDELT 24/7. JIJ ZIET EN HANDELT OP DEZELFDE REKENING.',
+  'Bot refused': 'Bot weigerde',
+  'Bot connected': 'Bot verbonden',
+  'Prices and account are live again': 'Koersen en rekening zijn weer live',
+  'No connection to the bot': 'Geen verbinding met de bot',
+  'The bot keeps trading on the server. Reconnecting...': 'De bot handelt gewoon door op de server. Opnieuw verbinden...',
+  'Connection to the 24/7 bot restored': 'Verbinding met de 24/7-bot hersteld',
+  'Connection to the 24/7 bot lost; retrying every second': 'Verbinding met de 24/7-bot verbroken; elke seconde nieuwe poging',
+  'NEONFX online, connected to your 24/7 bot. You see and trade the bot\'s account; it trades automatically around the clock. Type "help" for commands.':
+    'NEONFX online, verbonden met je 24/7-bot. Je ziet en handelt op de rekening van de bot; hij handelt dag en nacht automatisch. Typ "help" voor commando\'s.',
+  'Auto-trading of the 24/7 bot is always on': 'Automatisch handelen van de 24/7-bot staat altijd aan',
+  'The 24/7 bot trades automatically, 24/7': 'De bot handelt 24/7 automatisch',
+  'The strategy lab runs on the 24/7 bot: see the Autopilot 24/7 tab': 'Het strategielab draait op de 24/7-bot: zie het tabblad Autopilot 24/7',
+  'The bot account cannot be reset from the terminal': 'De rekening van de bot kan niet vanuit de terminal worden gereset',
+  'BOT · NO CONNECTION': 'BOT · GEEN VERBINDING',
+  'BOT · CLOSED': 'BOT · DICHT',
+  'Bot account': 'Rekening van de bot',
+  'These settings and the risk guard apply to your 24/7 bot on the server. Stop-out closes the biggest loser when margin level falls below 50%. The bot follows real FX hours: closed from Friday 17:00 to Sunday 17:00 New York time.':
+    'Deze instellingen en de risk guard gelden voor je 24/7-bot op de server. Stop-out sluit de grootste verliezer als het margeniveau onder 50% zakt. De bot volgt de echte FX-uren: dicht van vrijdag 17:00 tot zondag 17:00 New Yorkse tijd (23:00 Nederlandse tijd).',
+  'Real prices from the broker feed of your 24/7 bot.': 'Echte koersen van de broker-feed van je 24/7-bot.',
+  "Prices from your 24/7 bot's simulator. It is not a live market feed.": 'Koersen uit de simulator van je 24/7-bot. Dit is geen live marktfeed.',
+  'Auto-trading is off': 'Automatisch handelen staat uit',
+  'Auto-trading: always on': 'Automatisch handelen: altijd aan',
 };
 
 const dur = (s: string) => s.replace(/(\d+)h/g, '$1u');
@@ -669,6 +696,17 @@ const RULES: Rule[] = [
   [/^NEONFX bot stopped \((.+)\)\. Equity (.+)\. State saved\.$/, (s, e) => `NEONFX-bot gestopt (${s}). Equity ${e}. Toestand opgeslagen.`],
   [/^NEONFX · (.+)$/, (m) => `NEONFX · ${tr(m)}`],
   [/^(deployed|promoted|demoted|benched|learned|upgrade|rejected)(:)? (.+)$/, (k, c, r) => tr(`AUTOPILOT ${k}${c ?? ''} ${r}`)],
+  [/^AUTO 24\/7 · (\d+)$/, (n) => `AUTO 24/7 · ${n}`],
+  [/^(.+) · market open$/, (f) => `${f} · markt open`],
+  [/^(.+) · market closed$/, (f) => `${f} · markt dicht`],
+  [/^BOT · SIM · (.+)$/, (l) => `BOT · SIM · ${l}`],
+  [/^  (.+) · REAL PRICES \.\.\. OK$/, (l) => `  ${l} · ECHTE KOERSEN ... OK`],
+  [/^  (.+) · SIMULATED PRICES \.\.\. OK$/, (l) => `  ${l} · GESIMULEERDE KOERSEN ... OK`],
+  [/^> BOT ACCOUNT (.+) · (\d+) OPEN POSITIONS$/, (b, n) => `> REKENING VAN DE BOT ${b} · ${n} OPEN POSITIES`],
+  [/^BOT REFUSED: (.+)$/, (m) => `BOT WEIGERDE: ${tr(m)}`],
+  [/^Price feed: (.+)\.$/, (l) => `Koersbron: ${l}.`],
+  [/^The bot trades automatically with (\d+) strategies$/, (n) => `De bot handelt automatisch met ${n} strategieën`],
+  [/^Can't reach the bot: (.+)$/, (m) => `Kan de bot niet bereiken: ${m}`],
 ];
 
 /** True when Dutch has an entry or pattern for this English string. */

@@ -247,7 +247,7 @@ export class TradingEngine {
     this.listeners.push(fn);
   }
 
-  private emit(e: EngineEvent): void {
+  protected emit(e: EngineEvent): void {
     for (const fn of this.listeners) fn(e);
   }
 

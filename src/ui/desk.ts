@@ -422,6 +422,17 @@ export function initDesk(app: App): Desk {
   const aLev = $<HTMLSelectElement>('a-lev');
   const aComm = $<HTMLInputElement>('a-comm');
   const aStart = $<HTMLInputElement>('a-start');
+  if (app.bot) {
+    // Bot mode: these settings belong to the bot's account on the server. Resetting it, a new
+    // starting balance and weekend practice don't apply there.
+    aStart.closest('label')!.hidden = true;
+    $('a-weekend').closest('label')!.hidden = true;
+    $('a-reset').closest<HTMLElement>('.inl')!.hidden = true;
+    const head = $('acct-form').querySelector<HTMLElement>('.mini-h');
+    if (head) head.textContent = 'Bot account';
+    const fine = $('acct-form').querySelector<HTMLElement>('.fine');
+    if (fine) fine.textContent = 'These settings and the risk guard apply to your 24/7 bot on the server. Stop-out closes the biggest loser when margin level falls below 50%. The bot follows real FX hours: closed from Friday 17:00 to Sunday 17:00 New York time.';
+  }
 
   function renderRisk(): void {
     const g = app.engine.state.guard;

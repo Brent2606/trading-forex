@@ -16,7 +16,9 @@ import { initBotPanel } from './botPanel';
 import { LabClient } from './labClient';
 import { initBacktest, tfForBarMs } from './backtestPanel';
 import { CandleChart, type PriceLine } from './chart';
-import { loadPrefs, type App, type OrderIntent, type SoundKind, type ToastKind } from './context';
+import { loadPrefs, type App, type OrderIntent, type SoundKind, type ToastKind, type UiMarket } from './context';
+import type { LiveDump, MarketDump } from '../core/botTypes';
+import { botGet, readBotLink, RemoteEngine, RemoteMarket, type BotLink } from './remote';
 import { initDesk } from './desk';
 import { $, pressSeg, priceHtml, setSigned, setText } from './dom';
 import { sizeOrder } from './orders';
@@ -133,6 +135,29 @@ export async function boot(): Promise<void> {
   const paint = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
 
   await say('> NEONFX CORE v1.0 ................................. OK');
+  const link = readBotLink();
+  if (link) {
+    // Served by the 24/7 bot: show the bot's market and account instead of a local simulator.
+    await say('> CONNECTING TO YOUR 24/7 BOT ...');
+    let dump: MarketDump | null = null;
+    let live: LiveDump | null = null;
+    for (let tries = 0; !dump || !live; tries++) {
+      try {
+        dump = await botGet<MarketDump>(link, '/api/market', 60_000);
+        live = await botGet<LiveDump>(link, '/api/live?h=0');
+      } catch {
+        if (tries === 0) await say('  BOT NOT REACHABLE YET · RETRYING EVERY 5 SECONDS ...');
+        await new Promise((r) => setTimeout(r, 5000));
+      }
+    }
+    await say(`  ${dump.label} · ${dump.real ? 'REAL PRICES' : 'SIMULATED PRICES'} ... OK`);
+    await say(`> BOT ACCOUNT ${money(live.state.balance)} · ${live.state.positions.length} OPEN POSITIONS`);
+    await say('> THE BOT TRADES 24/7. YOU SEE AND TRADE THE SAME ACCOUNT.');
+    start(new RemoteMarket(dump), live.state, { link, live });
+    bootEl.classList.add('done');
+    setTimeout(() => (bootEl.hidden = true), fast ? 0 : 400);
+    return;
+  }
   const seed = await chooseSeed(say);
   await say('> SYNTHESIZING 250 TRADING DAYS × 16 PAIRS ...');
   await paint();
@@ -148,16 +173,23 @@ export async function boot(): Promise<void> {
 
 // ---------------------------------------------------------------- app
 
-function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
+function start(market: UiMarket, state: ReturnType<typeof freshState>, bot: { link: BotLink; live: LiveDump } | null = null): void {
   initAudioOnGesture();
   const prefs = loadPrefs();
-  market.respectHours = !prefs.weekendPractice;
-  const engine = new TradingEngine(state, {
-    quote: (s) => market.quote(s),
+  if (!bot) market.respectHours = !prefs.weekendPractice;
+  const view = {
+    quote: (s: string) => market.quote(s),
     mid: market.mid,
     now: () => market.time,
     isOpen: () => market.isOpen(),
-  });
+  };
+  const remote = bot ? new RemoteEngine(state, view, bot.link) : null;
+  if (remote && bot) remote.sync(bot.live);
+  const engine: TradingEngine = remote ?? new TradingEngine(state, view);
+  const remoteMarket = bot ? (market as RemoteMarket) : null;
+  let configTimer: ReturnType<typeof setTimeout> | null = null;
+  // The bot's autopilot is the only one: the browser autopilot tab gives way to the bot's.
+  if (bot && prefs.tab === 'autopilot') prefs.tab = 'bot';
   const alertsRaw = load<PriceAlert[]>('alerts');
   const alerts: PriceAlert[] = Array.isArray(alertsRaw)
     ? alertsRaw.filter((a) => a && INSTRUMENTS.some((i) => i.symbol === a.symbol) && typeof a.price === 'number')
@@ -189,6 +221,7 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
 
   const app: App = {
     market,
+    bot: !!bot,
     engine,
     prefs,
     alerts,
@@ -209,7 +242,13 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
     },
     savePrefs: () => save('ui', prefs),
     saveAccount: () => {
-      accountDirty = true;
+      if (!remote) {
+        accountDirty = true;
+        return;
+      }
+      // Bot mode: risk and account settings live on the bot.
+      if (configTimer) clearTimeout(configTimer);
+      configTimer = setTimeout(() => remote.pushConfig(), 400);
     },
     saveAlerts: () => save('alerts', alerts),
     deskChanged: () => desk.render(),
@@ -325,12 +364,15 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
     if (g.className !== gs[1]) g.className = gs[1];
   }
   const feed = $('feed-chip');
-  feed.textContent = `SIM · ${market.seed.label}`;
+  feed.textContent = bot ? `BOT · ${market.seed.label}` : `SIM · ${market.seed.label}`;
   feed.className = 'chip info';
-  feed.title =
-    'Prices come from a simulator anchored to ' +
-    (market.seed.source === 'ecb' ? 'European Central Bank reference rates.' : market.seed.source === 'resumed' ? 'your last session.' : 'built-in reference rates.') +
-    ' It is not a live market feed.';
+  feed.title = bot
+    ? remoteMarket?.real
+      ? 'Real prices from the broker feed of your 24/7 bot.'
+      : "Prices from your 24/7 bot's simulator. It is not a live market feed."
+    : 'Prices come from a simulator anchored to ' +
+      (market.seed.source === 'ecb' ? 'European Central Bank reference rates.' : market.seed.source === 'resumed' ? 'your last session.' : 'built-in reference rates.') +
+      ' It is not a live market feed.';
 
   // ---- language
   const langBtn = $('lang-toggle');
@@ -760,15 +802,24 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
         log(`Ticket sizing: ${c.pct}% of equity per trade`, 'ok');
         return;
       case 'auto':
+        if (bot) {
+          log(c.on === false ? 'Auto-trading of the 24/7 bot is always on' : 'The 24/7 bot trades automatically, 24/7', 'info');
+          return;
+        }
         if (c.on === undefined) {
-          const n = autopilot.liveDeployments().length;
-          log(`Autopilot is ${autopilot.config.enabled ? 'ON' : 'OFF'} · ${n} strateg${n === 1 ? 'y' : 'ies'} deployed · lab ${autopilot.config.lab ? 'searching' : 'paused'}`, 'info');
+          const n = autopilot!.liveDeployments().length;
+          log(`Autopilot is ${autopilot!.config.enabled ? 'ON' : 'OFF'} · ${n} strateg${n === 1 ? 'y' : 'ies'} deployed · lab ${autopilot!.config.lab ? 'searching' : 'paused'}`, 'info');
         } else apPanel.setEnabled(c.on);
         return;
       case 'lab':
+        if (bot) {
+          if (c.on !== undefined) botPanel.setLab(c.on);
+          else log('The strategy lab runs on the 24/7 bot: see the Autopilot 24/7 tab', 'info');
+          return;
+        }
         if (c.on === undefined) {
-          const s = lab.stats;
-          log(s ? `Lab: generation ${s.generation}, ${s.tested} strategies tested, ${lab.hof.length} on the leaderboard (${s.dataLabel})` : 'Lab starting', 'info');
+          const s = lab!.stats;
+          log(s ? `Lab: generation ${s.generation}, ${s.tested} strategies tested, ${lab!.hof.length} on the leaderboard (${s.dataLabel})` : 'Lab starting', 'info');
         } else apPanel.setLab(c.on);
         return;
       case 'reset':
@@ -807,37 +858,54 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
   });
 
   // ---- autopilot + strategy lab
-  const apSaved = parseAutopilotState(load('autopilot')) ?? freshAutopilotState();
-  const labSaved = load<{ hof?: Evaluation[]; stats?: Partial<LabStats> }>('lab');
-  const lab = new LabClient({
-    type: 'init',
-    seed: randomSeed(),
-    commission: engine.state.settings.commissionPerLot,
-    hof: Array.isArray(labSaved?.hof) ? labSaved.hof : [],
-    stats: labSaved?.stats ?? {},
-    blacklist: apSaved.blacklist,
-  });
-  const autopilot = new Autopilot(apSaved, {
-    engine,
-    series: (s, tf) => market.series(s, tf),
-    quote: (s) => market.quote(s),
-    mid: market.mid,
-    now: () => market.time,
-    validate: (lesson, genomes) => lab.validate(lesson, genomes),
-    log: (msg, kind) => log(msg, kind),
-  });
-  engine.on((e) => {
-    if (e.type === 'close') autopilot.onClose(e.trade);
-  });
-  app.positionTag = (id) => (autopilot.state.owned[String(id)] ? 'AUTO' : null);
+  // In bot mode the bot runs the autopilot and lab; the browser runs neither.
+  let autopilot: Autopilot | null = null;
+  let lab: LabClient | null = null;
+  if (!bot) {
+    const apSaved = parseAutopilotState(load('autopilot')) ?? freshAutopilotState();
+    const labSaved = load<{ hof?: Evaluation[]; stats?: Partial<LabStats> }>('lab');
+    const lc = new LabClient({
+      type: 'init',
+      seed: randomSeed(),
+      commission: engine.state.settings.commissionPerLot,
+      hof: Array.isArray(labSaved?.hof) ? labSaved.hof : [],
+      stats: labSaved?.stats ?? {},
+      blacklist: apSaved.blacklist,
+    });
+    const ap = new Autopilot(apSaved, {
+      engine,
+      series: (s, tf) => market.series(s, tf),
+      quote: (s) => market.quote(s),
+      mid: market.mid,
+      now: () => market.time,
+      validate: (lesson, genomes) => lc.validate(lesson, genomes),
+      log: (msg, kind) => log(msg, kind),
+    });
+    engine.on((e) => {
+      if (e.type === 'close') ap.onClose(e.trade);
+    });
+    app.positionTag = (id) => (ap.state.owned[String(id)] ? 'AUTO' : null);
+    autopilot = ap;
+    lab = lc;
+  } else {
+    app.positionTag = (id) => (remote!.owned.has(id) ? 'AUTO' : null);
+    // One autopilot: hide the browser's own and show the bot's as "Autopilot 24/7".
+    const apTab = document.querySelector<HTMLElement>('#tabs button[data-tab="autopilot"]');
+    if (apTab) apTab.hidden = true;
+    const botTab = document.querySelector<HTMLElement>('#tabs button[data-tab="bot"]');
+    if (botTab) botTab.innerHTML = `${tr('Autopilot 24/7')} <b id="cnt-bot">—</b>`;
+  }
 
   // ---- modules
   const ticket = initTicket(app);
   const desk = initDesk(app);
   const analysis = initAnalysis(app);
   initBacktest(app);
-  const apPanel = initAutopilotPanel(app, autopilot, lab);
-  const botPanel = initBotPanel(app);
+  const apPanel =
+    autopilot && lab
+      ? initAutopilotPanel(app, autopilot, lab)
+      : { render() {}, tick() {}, setEnabled() {}, setLab() {}, csvAvailable() {}, currentHof: () => [] };
+  const botPanel = initBotPanel(app, bot?.link ?? null);
   let deskDirty = false;
 
   loadChart(true);
@@ -849,25 +917,81 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
   analysis.renderTech();
   analysis.renderSessions();
   analysis.renderStrength();
-  log('NEONFX online. Paper trading on a simulated feed. Type "help" for commands.', 'ok');
-  log(`Price anchor: ${market.seed.label}. Spreads widen at the 17:00 New York rollover.`, 'info');
+  if (bot) {
+    log('NEONFX online, connected to your 24/7 bot. You see and trade the bot\'s account; it trades automatically around the clock. Type "help" for commands.', 'ok');
+    log(`Price feed: ${market.seed.label}.`, 'info');
+  } else {
+    log('NEONFX online. Paper trading on a simulated feed. Type "help" for commands.', 'ok');
+    log(`Price anchor: ${market.seed.label}. Spreads widen at the 17:00 New York rollover.`, 'info');
+  }
 
   // ---- persistence
   let flushes = 0;
   function flush(): void {
+    if (bot) return; // the bot keeps its own account; nothing to store in the browser
     if (accountDirty) {
       save('account', engine.state);
       accountDirty = false;
     }
     save('market', { t: market.time, rates: market.snapshotRates() });
-    save('autopilot', autopilot.state);
-    if (flushes++ % 10 === 0 && lab.stats) save('lab', { hof: lab.hof, stats: lab.stats });
+    if (autopilot) save('autopilot', autopilot.state);
+    if (lab && flushes++ % 10 === 0 && lab.stats) save('lab', { hof: lab.hof, stats: lab.stats });
   }
   setInterval(flush, 3000);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') flush();
   });
   window.addEventListener('pagehide', flush);
+
+  // ---- bot mode: poll the bot's prices and account every second
+  if (bot && remote && remoteMarket) {
+    let inFlight = false;
+    let fails = 0;
+    let lastCandles = Date.now();
+    remote.onRejected = (msg) => {
+      toast('Bot refused', msg, 'err');
+      log(`BOT REFUSED: ${msg}`, 'err');
+      app.sound('error');
+    };
+    const poll = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const d = await botGet<LiveDump>(bot.link, `/api/live?h=${remote.confirmed}`, 8000);
+        remoteMarket.apply(d);
+        if (remote.sync(d)) deskDirty = true;
+        if (fails >= 3) {
+          toast('Bot connected', 'Prices and account are live again', 'ok');
+          log('Connection to the 24/7 bot restored', 'ok');
+        }
+        fails = 0;
+        remoteMarket.connected = true;
+      } catch {
+        fails++;
+        if (fails === 3) {
+          remoteMarket.connected = false;
+          toast('No connection to the bot', 'The bot keeps trading on the server. Reconnecting...', 'err');
+          log('Connection to the 24/7 bot lost; retrying every second', 'err');
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+    remote.onSent = () => void poll();
+    setInterval(() => void poll(), 1000);
+    // After the tab slept, reload the candles so the chart has no gaps.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible' || Date.now() - lastCandles < 5 * 60_000) return;
+      lastCandles = Date.now();
+      void botGet<MarketDump>(bot.link, '/api/market', 60_000)
+        .then((d) => {
+          remoteMarket.loadCandles(d);
+          loadChart(false);
+          analysis.renderTech();
+        })
+        .catch(() => undefined);
+    });
+  }
 
   // ---- main loop
   let lastEvent = market.events.length ? market.events[market.events.length - 1].t : 0;
@@ -880,7 +1004,7 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
       engine.onTick();
       if (alerts.length) fired.push(...checkAlerts(alerts, (s) => market.quote(s), market.time));
     });
-    autopilot.onTick();
+    autopilot?.onTick();
     for (const a of fired) {
       const msg = `${displaySymbol(a.symbol)} bid ${a.cond === 'above' ? '≥' : '≤'} ${a.price}`;
       toast('Price alert', msg, 'warn');
@@ -925,7 +1049,12 @@ function start(market: MarketSim, state: ReturnType<typeof freshState>): void {
         note.classList.remove('neg');
         setText(note, '');
       }
-      setText(feed, `SIM · ${closed ? 'CLOSED' : market.seed.label}${market.respectHours ? '' : ' · WEEKEND PRACTICE'}`);
+      if (bot) {
+        const down = !remoteMarket!.connected;
+        setText(feed, down ? 'BOT · NO CONNECTION' : `BOT · ${closed ? 'CLOSED' : market.seed.label}`);
+        const fc = down ? 'chip bad' : 'chip info';
+        if (feed.className !== fc) feed.className = fc;
+      } else setText(feed, `SIM · ${closed ? 'CLOSED' : market.seed.label}${market.respectHours ? '' : ' · WEEKEND PRACTICE'}`);
       const clk = $('clock');
       const html = `${clock(Date.now())}<small>UTC ${new Date().toISOString().slice(11, 16)}</small>`;
       if (clk.innerHTML !== html) clk.innerHTML = html;

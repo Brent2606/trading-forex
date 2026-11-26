@@ -2,7 +2,8 @@ import type { TradingEngine } from '../core/account';
 import type { PriceAlert } from '../core/alerts';
 import type { Candle, Timeframe } from '../core/candles';
 import type { CsvImport } from '../core/csv';
-import type { MarketSim } from '../core/market';
+import type { VolEvent } from '../core/market';
+import type { MidLookup, Quote } from '../core/rates';
 import { findInstrument } from '../core/instruments';
 import { load } from '../core/storage';
 import { TIMEFRAMES } from '../core/candles';
@@ -96,8 +97,24 @@ export interface OrderIntent {
   trailPips?: number | null;
 }
 
+/** What the terminal needs from a market: the simulator, or the 24/7 bot's prices. */
+export interface UiMarket {
+  readonly time: number;
+  readonly seed: { label: string; source: string };
+  readonly events: readonly VolEvent[];
+  respectHours: boolean;
+  quote(symbol: string): Quote | undefined;
+  readonly mid: MidLookup;
+  series(symbol: string, tf: Timeframe): Candle[];
+  isOpen(): boolean;
+  advanceTo(now: number, onStep?: () => void): void;
+  snapshotRates(): unknown;
+}
+
 export interface App {
-  market: MarketSim;
+  market: UiMarket;
+  /** True when the terminal shows the 24/7 bot's account (served by the bot). */
+  bot: boolean;
   engine: TradingEngine;
   prefs: UiPrefs;
   alerts: PriceAlert[];

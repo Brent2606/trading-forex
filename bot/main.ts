@@ -20,21 +20,21 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { gunzipSync, gzipSync } from 'node:zlib';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { freshState, parseState, TradingEngine, type EngineEvent } from '../src/core/account';
 import { Autopilot, freshAutopilotState, liveMean, parseAutopilotState, type ApLogKind, type Lesson } from '../src/core/autopilot';
 import { parseCsv } from '../src/core/csv';
 import { csvDataset, marketDatasets } from '../src/core/datasets';
 import { escapeHtml, money, moneySigned } from '../src/core/format';
 import type { Genome } from '../src/core/genome';
-import { displaySymbol, FALLBACK_RATES, unitsToLots } from '../src/core/instruments';
+import { displaySymbol, FALLBACK_RATES, INSTRUMENTS, unitsToLots } from '../src/core/instruments';
 import type { Dataset, Evaluation, LabStats } from '../src/core/lab';
 import { createLabHost, type LabOut } from '../src/core/labHost';
 import { isValidSnapshot, MarketSim, sanitizeRates, type MarketSeed, type MarketSnapshot } from '../src/core/market';
 import { randomSeed } from '../src/core/rng';
 import { DAY, isFxOpen, nextFxChange, tradingDayKey } from '../src/core/time';
 import { bucketStart, TF_MS } from '../src/core/candles';
-import { dashboardHtml } from './dashboard';
 import { channelsFromEnv, createNotifier } from './notify';
 import { setLang, trLines } from '../src/core/i18n';
 import { freshMirrorState, OandaClient, OandaMarket, OandaMirror, resolveBaseUrl, type MirrorState } from './oanda';
@@ -42,7 +42,7 @@ import type { Candle, Timeframe } from '../src/core/candles';
 import type { MidLookup, Quote } from '../src/core/rates';
 import { handleRequest, loadOrCreateToken } from './api';
 import { CTraderMarket, type Tokens } from './ctrader';
-import type { BotControl, BotStatus } from '../src/core/botTypes';
+import type { BotControl, BotStatus, CandleRow, EngineOp, EngineOpResult, LiveDump, MarketDump } from '../src/core/botTypes';
 
 const env = process.env;
 const DATA = env.NEONFX_DATA ?? join(process.cwd(), 'data');
@@ -615,8 +615,89 @@ ${s.marketOpen ? '' : '<div style="color:#ffc23d">FX market closed for the weeke
     }
     persist();
   };
-  const dashboard = dashboardHtml();
-  createServer((rq, rs) => handleRequest(rq, rs, { token: access.token, status, page: () => dashboard, classicPage: page, control }))
+  // ---- the NEONFX terminal, served by the bot and connected to its account
+  const terminalFile = [
+    env.NEONFX_UI,
+    join(dirname(fileURLToPath(import.meta.url)), 'terminal.html'),
+    join(process.cwd(), 'dist-single', 'index.html'),
+  ].find((f): f is string => !!f && existsSync(f));
+  let terminalHtml: string | null = null;
+  const terminal = () => {
+    if (!terminalFile) return null;
+    try {
+      terminalHtml ??= readFileSync(terminalFile, 'utf8');
+    } catch {
+      terminalHtml = null;
+    }
+    return terminalHtml;
+  };
+  const rows = (cs: readonly Candle[]): CandleRow[] => cs.map((c) => [c.t, c.o, c.h, c.l, c.c, c.v]);
+  const quotes = () => INSTRUMENTS.map((i) => market.quote(i.symbol)).filter((q): q is Quote => !!q);
+  const marketDump = (): MarketDump => ({
+    time: market.time,
+    label: market.label,
+    real: market.real,
+    open: market.isOpen(),
+    quotes: quotes(),
+    candles: Object.fromEntries(INSTRUMENTS.map((i) => [i.symbol, { H1: rows(market.series(i.symbol, 'H1')), M1: rows(market.series(i.symbol, 'M1')) }])),
+  });
+  const live = (from: number): LiveDump => {
+    const st = engine.state;
+    const historyFrom = from <= st.history.length ? from : 0;
+    return {
+      time: market.time,
+      label: market.label,
+      real: market.real,
+      open: market.isOpen(),
+      quotes: quotes(),
+      state: { ...st, history: st.history.slice(historyFrom) },
+      historyFrom,
+      owned: Object.keys(autopilot.state.owned).map(Number),
+    };
+  };
+  const res = (r: { ok: boolean; error?: string }): EngineOpResult => (r.ok ? { ok: true } : { ok: false, error: r.error ?? 'Rejected' });
+  const engineOp = (op: EngineOp): EngineOpResult => {
+    let out: EngineOpResult;
+    switch (op.op) {
+      case 'submit':
+        out = res(engine.submit(op.req));
+        if (out.ok) log(`MANUAL ${op.req.side.toUpperCase()} ${unitsToLots(op.req.units)} ${displaySymbol(op.req.symbol)} ${op.req.type} from the terminal`);
+        break;
+      case 'close':
+        out = res(engine.close(op.id, op.units));
+        break;
+      case 'closeIds': {
+        const ids = new Set(op.ids);
+        engine.closeWhere((p) => ids.has(p.id));
+        out = { ok: true };
+        break;
+      }
+      case 'modify':
+        out = res(engine.modify(op.id, op.changes));
+        break;
+      case 'breakEven':
+        out = res(engine.breakEven(op.id));
+        break;
+      case 'reverse':
+        out = res(engine.reverse(op.id));
+        break;
+      case 'cancelOrder':
+        out = res(engine.cancelOrder(op.id, 'Cancelled from the terminal'));
+        break;
+      case 'config':
+        engine.state.guard = { ...op.guard };
+        engine.state.settings.leverage = op.leverage;
+        engine.state.settings.commissionPerLot = op.commissionPerLot;
+        log(`Risk settings changed from the terminal: guard ${op.guard.enabled ? 'ON' : 'OFF'}, max risk ${op.guard.maxRiskPct}%, daily limit ${op.guard.dailyLossPct}%, max ${op.guard.maxPositions} positions, leverage 1:${op.leverage}`);
+        out = { ok: true };
+        break;
+    }
+    persist();
+    return out;
+  };
+  createServer((rq, rs) =>
+    handleRequest(rq, rs, { token: access.token, status, page, control, terminal, market: marketDump, live, engine: engineOp }),
+  )
     .on('error', (e) => log(`Status server: ${e.message}`, 'err'))
     .listen(PORT, HOST, () =>
       log(

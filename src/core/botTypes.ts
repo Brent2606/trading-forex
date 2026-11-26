@@ -1,3 +1,47 @@
+import type { AccountState, GuardSettings, OrderRequest } from './account';
+import type { Quote } from './rates';
+
+/** A candle as a compact array: [time, open, high, low, close, volume]. */
+export type CandleRow = [number, number, number, number, number, number];
+
+/** GET /api/market: everything the terminal needs to draw the bot's market once at start-up. */
+export interface MarketDump {
+  time: number;
+  label: string;
+  real: boolean;
+  open: boolean;
+  quotes: Quote[];
+  /** Hourly and minute history per pair; the terminal aggregates the other timeframes. */
+  candles: Record<string, { H1: CandleRow[]; M1: CandleRow[] }>;
+}
+
+/** GET /api/live?h=<history length the terminal has>: prices and the bot's account, polled every second. */
+export interface LiveDump {
+  time: number;
+  label: string;
+  real: boolean;
+  open: boolean;
+  quotes: Quote[];
+  /** The bot's account; `history` holds only the trades after index `historyFrom`. */
+  state: AccountState;
+  historyFrom: number;
+  /** Ids of positions the autopilot opened. */
+  owned: number[];
+}
+
+/** POST /api/engine: the terminal's manual actions on the bot's account. */
+export type EngineOp =
+  | { op: 'submit'; req: OrderRequest }
+  | { op: 'close'; id: number; units?: number }
+  | { op: 'closeIds'; ids: number[] }
+  | { op: 'modify'; id: number; changes: { sl?: number | null; tp?: number | null; trailPips?: number | null } }
+  | { op: 'breakEven'; id: number }
+  | { op: 'reverse'; id: number }
+  | { op: 'cancelOrder'; id: number }
+  | { op: 'config'; guard: GuardSettings; leverage: number; commissionPerLot: number };
+
+export type EngineOpResult = { ok: true } | { ok: false; error: string };
+
 /** The JSON the 24/7 bot serves at /api/status (shared by the bot and the terminal). */
 export interface BotStatus {
   time: string;
