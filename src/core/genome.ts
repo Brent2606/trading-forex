@@ -42,6 +42,9 @@ export const SEARCH: Record<string, Record<string, Range>> = {
   'bb-breakout': { period: [10, 60, 1], mult: [1, 3.5, 0.1] },
   'macd-cross': { fast: [4, 24, 1], slow: [15, 60, 1], signal: [3, 18, 1] },
   donchian: { period: [5, 120, 1] },
+  'bb-revert': { period: [10, 60, 1], mult: [1.5, 3.5, 0.1] },
+  momentum: { period: [6, 120, 1], thr: [1.5, 8, 0.1] },
+  'session-breakout': { open: [5, 14, 1], hours: [3, 10, 1] },
 };
 const SL: Range = [0.8, 4, 0.1];
 const TP: Range = [1, 8, 0.1];
@@ -185,7 +188,13 @@ export function describeGenome(g: Genome): string {
             ? `MACD ${p.fast}/${p.slow}/${p.signal} cross`
             : g.strategy === 'donchian'
               ? `Donchian ${p.period} breakout`
-              : (s?.name ?? g.strategy);
+              : g.strategy === 'bb-revert'
+                ? `BB(${p.period}, ${p.mult}) reversion`
+                : g.strategy === 'momentum'
+                  ? `Momentum(${p.period}, ${p.thr})`
+                  : g.strategy === 'session-breakout'
+                    ? `Range(${p.open}h UTC, ${p.hours}) breakout`
+                    : (s?.name ?? g.strategy);
   const parts = [core, `SL ${g.slAtr}×ATR`, g.tpAtr ? `TP ${g.tpAtr}×ATR` : 'no TP'];
   if (g.trend) parts.push(`EMA${g.trend} trend`);
   if (g.exitOnOpposite) parts.push('exit on flip');

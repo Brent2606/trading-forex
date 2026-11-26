@@ -11,7 +11,7 @@
  * Settings (environment variables):
  *   NEONFX_DATA      data folder (default ./data)       NEONFX_PORT  status port (8787)
  *   NEONFX_HOST      status host (127.0.0.1)            NEONFX_AUTO  on|off  (on)
- *   NEONFX_LAB       on|off (on)                        NEONFX_MODE  explore|strict (explore)
+ *   NEONFX_LAB       on|off (on)                        NEONFX_MODE  explore|strict|auto (explore)
  *   NEONFX_RISK      risk % per trade (0.5)             NEONFX_TF    H1|H4 (H1)
  *   NEONFX_LAB_DUTY  share of CPU time for the lab, 0.1–1 (1)
  *   NEONFX_MAX_STRATEGIES  strategies trading at once, 1–12 (3)
@@ -37,7 +37,7 @@ import { createLabHost, type LabOut } from '../src/core/labHost';
 import { isValidSnapshot, MarketSim, sanitizeRates, type MarketSeed, type MarketSnapshot } from '../src/core/market';
 import { randomSeed } from '../src/core/rng';
 import { DAY, isFxOpen, nextFxChange, tradingDayKey } from '../src/core/time';
-import { bucketStart, TF_MS } from '../src/core/candles';
+import { aggregate, bucketStart, TF_MS } from '../src/core/candles';
 import { channelsFromEnv, createNotifier } from './notify';
 import { setLang, trLines } from '../src/core/i18n';
 import { freshMirrorState, OandaClient, OandaMarket, OandaMirror, resolveBaseUrl, type MirrorState } from './oanda';
@@ -296,6 +296,8 @@ async function main(): Promise<void> {
   apState.config.enabled = AUTO_LOCK || flag(env.NEONFX_AUTO, true);
   apState.config.lab = flag(env.NEONFX_LAB, true);
   if (env.NEONFX_MODE === 'strict' || env.NEONFX_MODE === 'explore') apState.config.mode = env.NEONFX_MODE;
+  // auto: on real prices only strategies that also passed the holdout; on the simulator any validated one.
+  else if (env.NEONFX_MODE === 'auto') apState.config.mode = market.real ? 'strict' : 'explore';
   if (env.NEONFX_RISK && Number(env.NEONFX_RISK) > 0) apState.config.riskPct = Math.min(2, Number(env.NEONFX_RISK));
   if (env.NEONFX_TF === 'H1' || env.NEONFX_TF === 'H4') apState.config.tf = env.NEONFX_TF;
   // More strategies at once = more trades = data sooner; each strategy keeps its own rules.
@@ -335,8 +337,21 @@ async function main(): Promise<void> {
   });
   let dataLabel = '';
   const refreshData = () => {
+    // Best source first: years of the broker's own hourly bars (the prices the bot trades on).
+    if (ctrader?.researchReady) {
+      apState.config.labData = 'sim';
+      const tf = apState.config.tf;
+      const ds = marketDatasets((s) => [...(tf === 'H1' ? ctrader.research[s] : aggregate(ctrader.research[s], tf))], tf, apState.config.universe, market.mid);
+      const label = `${ctrader.label} history ${tf}, ${ds.length} pairs, ${ds[0]?.candles.length ?? 0} bars each (real prices)`;
+      if (label !== dataLabel) {
+        labIn({ type: 'data', datasets: ds, kind: 'real', label });
+        log(`LAB researching ${label}`);
+      }
+      dataLabel = label;
+      return;
+    }
     const real = realDatasets(market.mid);
-    // With a broker feed, the longer CSV history (if any) still beats the broker's ~10 months of bars.
+    // With a broker feed, the longer CSV history (if any) still beats the broker's ~10 months of live bars.
     if (market.real && !real.datasets.length) {
       apState.config.labData = 'sim';
       const ds = marketDatasets((s, tf) => market.series(s, tf), apState.config.tf, apState.config.universe, market.mid);
@@ -363,6 +378,20 @@ async function main(): Promise<void> {
   };
   refreshData();
   labIn({ type: 'run', on: apState.config.lab, duty: DUTY });
+  if (ctrader) {
+    // Fetch the long research history in the background (a few minutes), and again every day.
+    const research = () =>
+      ctrader
+        .loadResearch()
+        .then((bars) => {
+          if (!bars) return;
+          log(`cTrader research history loaded: ${bars}+ hourly bars per pair`, 'ok');
+          refreshData();
+        })
+        .catch((e) => log(`cTrader research history not loaded (${e instanceof Error ? e.message : String(e)}); the lab keeps its current data`, 'warn'));
+    void research();
+    setInterval(() => void research(), DAY);
+  }
 
   const autopilot = new Autopilot(apState, {
     engine,

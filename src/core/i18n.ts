@@ -210,6 +210,19 @@ const NL: Record<string, string> = {
   'Bollinger Breakout': 'Bollinger-uitbraak',
   'MACD Signal Cross': 'MACD-signaalkruising',
   'Donchian Breakout': 'Donchian-uitbraak',
+  'Bollinger Reversion': 'Bollinger-terugkeer',
+  'Momentum Burst': 'Momentumstoot',
+  'Session Range Breakout': 'Uitbraak uit sessie-bereik',
+  Lookback: 'Terugkijkperiode',
+  'Move (×ATR)': 'Beweging (×ATR)',
+  'From hour (UTC)': 'Vanaf uur (UTC)',
+  'Range hours': 'Uren van het bereik',
+  'Fades stretches. Long when price closes back above the lower band after closing below it, short when it closes back below the upper band.':
+    'Speelt tegen uitschieters in. Long als de koers weer boven de onderste band sluit na een slot eronder, short als hij weer onder de bovenste band sluit.',
+  'Rides strong moves. Long when price has risen by more than a set multiple of its normal bar range over the last N bars, short when it has fallen that much.':
+    'Gaat mee met sterke bewegingen. Long als de koers over de laatste N candles meer is gestegen dan een ingesteld veelvoud van een normale candle, short als hij zoveel is gedaald.',
+  'Trades the break of a quiet stretch. Takes the high and low of the hours before a set hour (UTC), then goes long on the first close above that range and short on the first close below it.':
+    'Handelt de uitbraak uit een rustige periode. Neemt de top en bodem van de uren vóór een ingesteld uur (UTC) en gaat long bij het eerste slot boven dat bereik en short bij het eerste slot eronder.',
   'Trend following. Long when the fast EMA crosses above the slow EMA, short on the cross below.':
     'Trendvolgend. Long als de snelle EMA boven de trage kruist, short bij de kruising omlaag.',
   'Fades extremes. Long when RSI climbs back above the oversold line, short when it drops back below overbought.':

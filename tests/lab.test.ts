@@ -24,6 +24,7 @@ import {
   evaluateGenome,
   gates,
   Lab,
+  leaderboardOrder,
   segmentStats,
   validateLessonOnHistory,
   type Dataset,
@@ -202,7 +203,8 @@ describe('Lab search', () => {
     expect(lab.stats.generation).toBeGreaterThanOrEqual(3);
     const hof = lab.hof();
     expect(hof.length).toBeLessThanOrEqual(5);
-    for (let k = 1; k < hof.length; k++) expect(hof[k - 1].score).toBeGreaterThanOrEqual(hof[k].score);
+    // Holdout-tested first, then validated, then by score.
+    for (let k = 1; k < hof.length; k++) expect(leaderboardOrder(hof[k - 1], hof[k])).toBeLessThanOrEqual(0);
     for (const e of hof) {
       expect(e.score).toBeGreaterThan(0);
       expect(e.train.meanR).toBeGreaterThan(0);

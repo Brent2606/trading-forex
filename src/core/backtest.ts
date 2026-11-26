@@ -31,6 +31,61 @@ function crossSignals(n: number, a: ArrayLike<number>, b: ArrayLike<number>): In
   return out;
 }
 
+/** How long after the range closes a break of it still counts, in hours. */
+export const SESSION_WINDOW_H = 6;
+
+/**
+ * Session range breakout: the high / low of the `hours` before `open` o'clock (UTC), then the
+ * first close above that high (+1) or below that low (−1) within SESSION_WINDOW_H hours.
+ * Works from bar times, so it is the same rule on any intraday timeframe.
+ */
+export function sessionRange(c: readonly Candle[], p: Record<string, number>): { signals: Int8Array; high: Float64Array; low: Float64Array } {
+  const H = 3_600_000;
+  const D = 24 * H;
+  const open = Math.round(p.open);
+  const hours = Math.round(p.hours);
+  const n = c.length;
+  const signals = new Int8Array(n);
+  const high = new Float64Array(n).fill(NaN);
+  const low = new Float64Array(n).fill(NaN);
+  let window = -1;
+  let hi = NaN;
+  let lo = NaN;
+  let up = false;
+  let down = false;
+  for (let i = 1; i < n; i++) {
+    const t = c[i].t;
+    const start = Math.floor(t / D) * D + open * H;
+    if (t < start || t >= start + SESSION_WINDOW_H * H) continue;
+    if (window !== start) {
+      window = start;
+      up = false;
+      down = false;
+      hi = -Infinity;
+      lo = Infinity;
+      let bars = 0;
+      for (let j = i - 1; j >= 0 && c[j].t >= start - hours * H; j--) {
+        hi = Math.max(hi, c[j].h);
+        lo = Math.min(lo, c[j].l);
+        bars++;
+      }
+      // Too few bars (a weekend or a gap in the data): no range, no trade.
+      if (bars < 2) hi = lo = NaN;
+    }
+    if (Number.isNaN(hi)) continue;
+    high[i] = hi;
+    low[i] = lo;
+    if (!up && c[i].c > hi) {
+      signals[i] = 1;
+      up = true;
+    } else if (!down && c[i].c < lo) {
+      signals[i] = -1;
+      down = true;
+    }
+  }
+  return { signals, high, low };
+}
+
 export const STRATEGIES: readonly Strategy[] = [
   {
     id: 'ema-cross',
@@ -120,6 +175,60 @@ export const STRATEGIES: readonly Strategy[] = [
         else if (c[i].c < ll[i - 1] && c[i - 1].c >= ll[i - 1]) out[i] = -1;
       }
       return out;
+    },
+  },
+  {
+    id: 'bb-revert',
+    name: 'Bollinger Reversion',
+    blurb: 'Fades stretches. Long when price closes back above the lower band after closing below it, short when it closes back below the upper band.',
+    params: [
+      { key: 'period', label: 'Period', def: 20, min: 5, max: 200, step: 1 },
+      { key: 'mult', label: 'Std devs', def: 2, min: 0.5, max: 4, step: 0.1 },
+    ],
+    signals(c, p) {
+      const cl = closes(c);
+      const bb = bollinger(cl, p.period, p.mult);
+      const out = new Int8Array(c.length);
+      for (let i = 1; i < c.length; i++) {
+        if (Number.isNaN(bb.lower[i - 1]) || Number.isNaN(bb.lower[i])) continue;
+        if (cl[i - 1] < bb.lower[i - 1] && cl[i] >= bb.lower[i]) out[i] = 1;
+        else if (cl[i - 1] > bb.upper[i - 1] && cl[i] <= bb.upper[i]) out[i] = -1;
+      }
+      return out;
+    },
+  },
+  {
+    id: 'momentum',
+    name: 'Momentum Burst',
+    blurb: 'Rides strong moves. Long when price has risen by more than a set multiple of its normal bar range over the last N bars, short when it has fallen that much.',
+    params: [
+      { key: 'period', label: 'Lookback', def: 24, min: 2, max: 300, step: 1 },
+      { key: 'thr', label: 'Move (×ATR)', def: 3, min: 0.5, max: 12, step: 0.1 },
+    ],
+    signals(c, p) {
+      const n = Math.round(p.period);
+      const a = atr(c, 14);
+      const out = new Int8Array(c.length);
+      for (let i = n + 1; i < c.length; i++) {
+        if (Number.isNaN(a[i]) || Number.isNaN(a[i - 1]) || !(a[i] > 0) || !(a[i - 1] > 0)) continue;
+        const now = (c[i].c - c[i - n].c) / a[i];
+        const prev = (c[i - 1].c - c[i - 1 - n].c) / a[i - 1];
+        if (now > p.thr && prev <= p.thr) out[i] = 1;
+        else if (now < -p.thr && prev >= -p.thr) out[i] = -1;
+      }
+      return out;
+    },
+  },
+  {
+    id: 'session-breakout',
+    name: 'Session Range Breakout',
+    blurb: 'Trades the break of a quiet stretch. Takes the high and low of the hours before a set hour (UTC), then goes long on the first close above that range and short on the first close below it.',
+    params: [
+      { key: 'open', label: 'From hour (UTC)', def: 7, min: 0, max: 23, step: 1 },
+      { key: 'hours', label: 'Range hours', def: 6, min: 2, max: 12, step: 1 },
+    ],
+    signals(c, p) {
+      return sessionRange(c, p).signals;
     },
   },
 ];

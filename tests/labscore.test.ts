@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FALLBACK_RATES } from '../src/core/instruments';
-import { cautiousSqn, DEFAULT_LAB, evaluateGenome, Lab, MIN_VAL_TRADES, segmentStats, type Dataset } from '../src/core/lab';
+import { cautiousSqn, DEFAULT_LAB, evaluateGenome, Lab, leaderboardOrder, MIN_VAL_TRADES, segmentStats, type Dataset } from '../src/core/lab';
 import { MarketSim } from '../src/core/market';
 
 describe('cautious SQN', () => {
@@ -62,6 +62,24 @@ describe('ranking', () => {
     }
     expect(ranked).toBeGreaterThan(0);
     for (const e of lab.hof()) expect(e.val.n).toBeGreaterThanOrEqual(MIN_VAL_TRADES);
+  });
+
+  it('puts holdout-tested strategies first and spreads the board over families', () => {
+    const lab = new Lab(3, { ...DEFAULT_LAB, hofSize: 6 });
+    lab.setData(datasets, 'sim', 't');
+    for (let k = 0; k < 600; k++) lab.step();
+    const hof = lab.hof();
+    for (let k = 1; k < hof.length; k++) expect(leaderboardOrder(hof[k - 1], hof[k])).toBeLessThanOrEqual(0);
+    const firstPlain = hof.findIndex((e) => !e.robust);
+    if (firstPlain >= 0) expect(hof.slice(firstPlain).some((e) => e.robust)).toBe(false);
+    const families = new Map<string, number>();
+    for (const e of hof) families.set(e.genome.strategy, (families.get(e.genome.strategy) ?? 0) + 1);
+    for (const n of families.values()) expect(n).toBeLessThanOrEqual(2); // a third of 6
+    // The order function itself: robust beats a higher score.
+    const a = { robust: true, validated: true, score: 1 } as never;
+    const b = { robust: false, validated: true, score: 9 } as never;
+    expect(leaderboardOrder(a, b)).toBeLessThan(0);
+    expect(leaderboardOrder(b, a)).toBeGreaterThan(0);
   });
 
   it('starts the best score over when the data changes', () => {

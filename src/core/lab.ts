@@ -288,6 +288,17 @@ export function evaluateGenome(g: Genome, datasets: readonly Dataset[], cfg: Lab
   };
 }
 
+/**
+ * Leaderboard order: strategies that also passed the holdout first, then validated ones, then
+ * the rest; by score within each group. On real data the highest scores were the most
+ * over-fitted: picks from the top of a score-only board lost about 0.13R per trade on data the
+ * lab never saw, while holdout-tested strategies roughly broke even.
+ */
+export function leaderboardOrder(a: Evaluation, b: Evaluation): number {
+  const tier = (e: Evaluation) => (e.robust ? 2 : e.validated ? 1 : 0);
+  return tier(b) - tier(a) || b.score - a.score;
+}
+
 export class Lab {
   readonly cfg: LabConfig;
   stats: LabStats = {
@@ -377,10 +388,19 @@ export class Lab {
     if (this.blacklist.has(e.id) || !(e.score > 0) || e.train.meanR <= 0) return;
     // One entry per signal rule keeps the leaderboard diverse instead of 12 near-copies.
     const twins = this.hofList.filter((x) => x.id !== e.id && similarSignal(x.genome, e.genome));
-    if (twins.some((t) => t.score >= e.score)) return;
+    if (twins.some((t) => leaderboardOrder(t, e) <= 0)) return;
     this.hofList = this.hofList.filter((x) => x.id !== e.id && !twins.includes(x));
     this.hofList.push(e);
-    this.hofList.sort((a, b) => b.score - a.score);
+    this.hofList.sort(leaderboardOrder);
+    // One family gets at most a third of the board (minimum two), so the search and the
+    // autopilot keep a choice of different kinds of strategies.
+    const cap = Math.max(2, Math.ceil(this.cfg.hofSize / 3));
+    const perFamily = new Map<string, number>();
+    this.hofList = this.hofList.filter((x) => {
+      const n = (perFamily.get(x.genome.strategy) ?? 0) + 1;
+      perFamily.set(x.genome.strategy, n);
+      return n <= cap;
+    });
     this.hofList.length = Math.min(this.hofList.length, this.cfg.hofSize);
     if (e.score > this.stats.bestScore && this.hofList.includes(e)) {
       this.stats.bestScore = e.score;

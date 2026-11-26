@@ -82,6 +82,12 @@ export function strategyName(id: string | null): string {
       return L('Momentum turn (MACD)', 'Omslag in momentum (MACD)');
     case 'donchian':
       return L('Breakout of a new high or low', 'Uitbraak naar een nieuwe top of bodem');
+    case 'bb-revert':
+      return L('Rebound from the edge of the range (Bollinger Bands)', 'Terugveer vanaf de rand van het bereik (Bollinger Bands)');
+    case 'momentum':
+      return L('Riding a strong move (momentum)', 'Meegaan met een sterke beweging (momentum)');
+    case 'session-breakout':
+      return L('Breakout from a quiet stretch (session range)', 'Uitbraak uit een rustige periode (sessie-bereik)');
     case null:
       return L('Manual (placed by you)', 'Handmatig (door jou geplaatst)');
     default:
@@ -89,7 +95,7 @@ export function strategyName(id: string | null): string {
   }
 }
 
-function strategyIdea(id: string): string {
+export function strategyIdea(id: string): string {
   switch (id) {
     case 'rsi-revert':
       return L(
@@ -115,6 +121,21 @@ function strategyIdea(id: string): string {
       return L(
         'Watches the highest and lowest price of the last bars. A close above that high (or below that low) is a breakout, and the strategy trades in its direction.',
         'Kijkt naar de hoogste en laagste koers van de laatste kaarsen. Sluit de koers boven die top (of onder die bodem), dan is dat een uitbraak en handelt de strategie in die richting.',
+      );
+    case 'bb-revert':
+      return L(
+        'The Bollinger Bands mark the normal range of the price. When the price has shot outside that range and comes back in, the stretch is often over, and the strategy trades the move back.',
+        'De Bollinger Bands geven het normale bereik van de koers aan. Is de koers daarbuiten geschoten en komt hij weer binnen, dan is de uitschieter vaak voorbij en speelt de strategie in op de beweging terug.',
+      );
+    case 'momentum':
+      return L(
+        'A move that is much larger than normal often continues for a while. This strategy measures how far the price has moved over the last bars and joins a move that is unusually strong.',
+        'Een beweging die veel groter is dan normaal zet vaak nog even door. Deze strategie meet hoe ver de koers de laatste kaarsen is opgeschoven en stapt in bij een beweging die ongewoon sterk is.',
+      );
+    case 'session-breakout':
+      return L(
+        'During quiet hours the price often stays within a narrow range. When a busier session starts and the price breaks out of that range, the strategy trades in the direction of the break.',
+        'In rustige uren blijft de koers vaak binnen een smal bereik. Begint er een drukkere sessie en breekt de koers uit dat bereik, dan handelt de strategie in de richting van de uitbraak.',
       );
     default:
       return L('A rule set found and tested by the strategy lab.', 'Een set regels die het strategielab heeft gevonden en getest.');
@@ -177,7 +198,7 @@ function when(t: number): string {
 }
 
 /** The strategy's own reading in two steps: what built up, and what triggered the entry. */
-function signalSteps(w: EntryWhy, digits: number): string[] {
+export function signalSteps(w: EntryWhy, digits: number): string[] {
   const f: SignalFact = w.signal;
   const buy = w.side === 'buy';
   const px = (v: number) => fmtPrice(v, digits);
@@ -249,13 +270,48 @@ function signalSteps(w: EntryWhy, digits: number): string[] {
           `De kaars van ${bar} sloot op <b>${px(w.close)}</b>, ${buy ? `boven die top (${px(f.high)})` : `onder die bodem (${px(f.low)})`}. Een nieuwe ${buy ? 'top' : 'bodem'} is een uitbraak, en de strategie gaat mee ${buy ? 'omhoog' : 'omlaag'}.`,
         ),
       ];
+    case 'bb-revert':
+      return [
+        L(
+          `The Bollinger Bands (period ${f.period}, width ${f.mult}×) marked the normal range of the price. The candle before closed at ${px(f.prevClose)}, ${buy ? `below the lower band (${px(f.prevLower)})` : `above the upper band (${px(f.prevUpper)})`}: the price had shot ${buy ? 'down' : 'up'} out of its range.`,
+          `De Bollinger Bands (periode ${f.period}, breedte ${f.mult}×) gaven het normale bereik van de koers aan. De kaars ervoor sloot op ${px(f.prevClose)}, ${buy ? `onder de onderste band (${px(f.prevLower)})` : `boven de bovenste band (${px(f.prevUpper)})`}: de koers was ${buy ? 'omlaag' : 'omhoog'} uit zijn bereik geschoten.`,
+        ),
+        L(
+          `The candle of ${bar} closed at <b>${px(w.close)}</b>, back ${buy ? `above the lower band (${px(f.lower)})` : `below the upper band (${px(f.upper)})`}. That is the ${buy ? 'buy' : 'sell'} signal: the stretch seems to be over and the strategy counts on a move back.`,
+          `De kaars van ${bar} sloot op <b>${px(w.close)}</b>, weer ${buy ? `boven de onderste band (${px(f.lower)})` : `onder de bovenste band (${px(f.upper)})`}. Dat is het ${buy ? 'koop' : 'verkoop'}signaal: de uitschieter lijkt voorbij en de strategie rekent op een beweging terug.`,
+        ),
+      ];
+    case 'momentum':
+      return [
+        L(
+          `The strategy measures how far the price has moved over the last ${f.period} candles, in multiples of a normal candle (ATR). One candle earlier that was ${n1(f.prevMove)}×: not yet beyond the line of ${buy ? '' : '−'}${f.thr}×.`,
+          `De strategie meet hoe ver de koers over de laatste ${f.period} kaarsen is opgeschoven, in veelvouden van een normale kaars (ATR). Eén kaars eerder was dat ${n1(f.prevMove)}×: nog niet voorbij de grens van ${buy ? '' : '−'}${f.thr}×.`,
+        ),
+        L(
+          `When the candle of ${bar} closed, the move had grown to <b>${n1(f.move)}×</b>, beyond the line. That is the ${buy ? 'buy' : 'sell'} signal: an unusually strong ${buy ? 'rise' : 'fall'}, and the strategy joins it.`,
+          `Toen de kaars van ${bar} sloot, was de beweging opgelopen tot <b>${n1(f.move)}×</b>, voorbij de grens. Dat is het ${buy ? 'koop' : 'verkoop'}signaal: een ongewoon sterke ${buy ? 'stijging' : 'daling'}, en de strategie gaat mee.`,
+        ),
+      ];
+    case 'session-breakout': {
+      const at = (h: number) => hm(Math.floor(w.barTime / 86_400_000) * 86_400_000 + h * 3_600_000);
+      return [
+        L(
+          `In the ${f.hours} hours up to ${at(f.open)} the price stayed between ${px(f.low)} and ${px(f.high)}: a quiet range.`,
+          `In de ${f.hours} uur tot ${at(f.open)} bleef de koers tussen ${px(f.low)} en ${px(f.high)}: een rustig bereik.`,
+        ),
+        L(
+          `The candle of ${bar} closed at <b>${px(w.close)}</b>, ${buy ? `above the top of that range (${px(f.high)})` : `below the bottom of that range (${px(f.low)})`}. That is the ${buy ? 'buy' : 'sell'} signal: the price breaks out and the strategy goes ${buy ? 'up' : 'down'} with it.`,
+          `De kaars van ${bar} sloot op <b>${px(w.close)}</b>, ${buy ? `boven de top van dat bereik (${px(f.high)})` : `onder de bodem van dat bereik (${px(f.low)})`}. Dat is het ${buy ? 'koop' : 'verkoop'}signaal: de koers breekt uit en de strategie gaat mee ${buy ? 'omhoog' : 'omlaag'}.`,
+        ),
+      ];
+    }
     default:
       return [L(`The strategy gave a ${buy ? 'buy' : 'sell'} signal when the candle of ${bar} closed.`, `De strategie gaf een ${buy ? 'koop' : 'verkoop'}signaal toen de kaars van ${bar} sloot.`)];
   }
 }
 
 /** The extra conditions the strategy checked before entering. */
-function conditions(w: EntryWhy, digits: number): string[] {
+export function conditions(w: EntryWhy, digits: number): string[] {
   const out: string[] = [];
   const buy = w.side === 'buy';
   if (w.trend) {
@@ -299,7 +355,7 @@ function studyFor(w: EntryWhy): ChartStudy {
   const s: ChartStudy = {};
   if (f.k === 'rsi-revert') s.rsi = { period: f.period, lower: f.lower, upper: f.upper };
   else if (f.k === 'ema-cross') s.emas = [f.fast, f.slow];
-  else if (f.k === 'bb-breakout') s.bb = { period: f.period, mult: f.mult };
+  else if (f.k === 'bb-breakout' || f.k === 'bb-revert') s.bb = { period: f.period, mult: f.mult };
   else if (f.k === 'macd-cross') s.macd = { fast: f.fast, slow: f.slow, signal: f.signal };
   else if (f.k === 'donchian') s.channel = f.period;
   if (w.trend) s.trend = w.trend.period;
@@ -327,7 +383,7 @@ function chartLegend(w: EntryWhy | null, closed: boolean): string[] {
         ),
       );
     if (f.k === 'ema-cross') out.push(L(`Blue and yellow lines: the averages EMA ${f.fast} and EMA ${f.slow}`, `Blauwe en gele lijn: de gemiddelden EMA ${f.fast} en EMA ${f.slow}`));
-    if (f.k === 'bb-breakout') out.push(L('Purple band: the Bollinger Bands', 'Paarse band: de Bollinger Bands'));
+    if (f.k === 'bb-breakout' || f.k === 'bb-revert') out.push(L('Purple band: the Bollinger Bands', 'Paarse band: de Bollinger Bands'));
     if (f.k === 'macd-cross') out.push(L('Below the chart: the MACD line and its signal line', 'Onder de grafiek: de MACD-lijn en zijn signaallijn'));
     if (f.k === 'donchian') out.push(L(`Dashed blue lines: the high and low of the last ${f.period} candles`, `Blauwe stippellijnen: de top en bodem van de laatste ${f.period} kaarsen`));
     if (w.trend) out.push(L(`Purple line: the trend average (EMA ${w.trend.period})`, `Paarse lijn: het trendgemiddelde (EMA ${w.trend.period})`));

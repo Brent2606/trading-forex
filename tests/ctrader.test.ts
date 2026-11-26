@@ -204,6 +204,24 @@ describe('CTraderMarket', () => {
     expect(m.mid('EURUSD')).toBeCloseTo((1.08503 + 1.08507) / 2, 6);
   });
 
+  it('loads a long research history for the lab without touching the live series', async () => {
+    const fake = new FakeCtrader();
+    const m = await connect(fake);
+    expect(m.researchReady).toBe(false);
+    const bars = await m.loadResearch(4000);
+    expect(bars).toBe(4000);
+    expect(m.researchReady).toBe(true);
+    for (const inst of INSTRUMENTS) {
+      expect(m.research[inst.symbol]).toHaveLength(4000);
+      expect(m.series(inst.symbol, 'H1').length).toBe(400); // live history unchanged
+    }
+    const r = m.research.EURUSD;
+    for (let i = 1; i < r.length; i++) expect(r[i].t).toBeGreaterThan(r[i - 1].t);
+    // Too little history is refused, and what was loaded before stays.
+    await expect(m.loadResearch(2000)).rejects.toMatchObject({ code: 'SHORT_HISTORY' });
+    expect(m.research.EURUSD).toHaveLength(4000);
+  }, 20_000);
+
   it('only uses demo accounts', async () => {
     const fake = new FakeCtrader();
     fake.accounts = [{ ctidTraderAccountId: 1, isLive: true, traderLogin: 1 }];

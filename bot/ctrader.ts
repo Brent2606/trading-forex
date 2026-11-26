@@ -415,6 +415,30 @@ export class CTraderMarket {
     return [...byTime.values()].sort((a, b) => a.t - b.t).slice(-want);
   }
 
+  /** Long hourly history per pair for strategy research; filled by loadResearch(). */
+  readonly research: Record<string, Candle[]> = {};
+  /** True once every pair has its research history. */
+  researchReady = false;
+
+  /**
+   * Loads years of the broker's own hourly bars for the strategy lab (the live series keep
+   * their shorter history, so start-up and the terminal stay fast). Safe to call again to
+   * refresh; on an error the previous research history stays in use.
+   */
+  async loadResearch(h1Bars = 18_000): Promise<number> {
+    let min = Infinity;
+    for (const info of this.symbols.values()) {
+      if (this.stopped) return 0;
+      if (!this.client) throw new CTraderError('Not connected to cTrader', 'DISCONNECTED');
+      const c = await this.bars(info, PERIOD.H1, h1Bars, 35 * DAY, Math.ceil(h1Bars / 500) + 8);
+      if (c.length < 3000) throw new CTraderError(`cTrader returned only ${c.length} hourly bars of research history for ${info.symbol}`, 'SHORT_HISTORY');
+      this.research[info.symbol] = c;
+      min = Math.min(min, c.length);
+    }
+    this.researchReady = Object.keys(this.research).length === this.symbols.size;
+    return this.researchReady ? min : 0;
+  }
+
   private async loadHistory(h1: number, m1: number): Promise<void> {
     for (const info of this.symbols.values()) {
       const hours = await this.bars(info, PERIOD.H1, h1, 35 * DAY, Math.ceil(h1 / 500) + 4);

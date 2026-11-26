@@ -3,6 +3,7 @@
  * of entry (and rebuilt from history for older trades). The terminal turns these facts into a
  * plain-language explanation next to the chart.
  */
+import { sessionRange } from './backtest';
 import { closes, type Candle, type Timeframe } from './candles';
 import { computeFeatures, signalAt, type Genome } from './genome';
 import { atr, bollinger, ema, highest, lowest, macd, rsi } from './indicators';
@@ -14,6 +15,11 @@ export type SignalFact =
   | { k: 'bb-breakout'; period: number; mult: number; upper: number; lower: number; prevClose: number }
   | { k: 'macd-cross'; fast: number; slow: number; signal: number; macdPrev: number; signalPrev: number; macdNow: number; signalNow: number }
   | { k: 'donchian'; period: number; high: number; low: number; prevClose: number }
+  | { k: 'bb-revert'; period: number; mult: number; upper: number; lower: number; prevClose: number; prevUpper: number; prevLower: number }
+  /** `move` / `prevMove`: the price change over `period` bars, in multiples of ATR(14). */
+  | { k: 'momentum'; period: number; thr: number; move: number; prevMove: number }
+  /** The high / low of the `hours` before `open` o'clock UTC. */
+  | { k: 'session-breakout'; open: number; hours: number; high: number; low: number }
   | { k: 'other' };
 
 export interface EntryWhy {
@@ -100,6 +106,20 @@ function signalFact(g: Genome, c: readonly Candle[], i: number): SignalFact {
         n,
       );
       return { k: 'donchian', period: n, high: r6(hh[i - 1]), low: r6(ll[i - 1]), prevClose };
+    }
+    case 'bb-revert': {
+      const bb = bollinger(cl, p.period, p.mult);
+      return { k: 'bb-revert', period: p.period, mult: p.mult, upper: r6(bb.upper[i]), lower: r6(bb.lower[i]), prevClose, prevUpper: r6(bb.upper[i - 1]), prevLower: r6(bb.lower[i - 1]) };
+    }
+    case 'momentum': {
+      const n = Math.round(p.period);
+      const a = atr(c, 14);
+      const move = (k: number) => (k - n >= 0 && a[k] > 0 ? r2((c[k].c - c[k - n].c) / a[k]) : NaN);
+      return { k: 'momentum', period: n, thr: p.thr, move: move(i), prevMove: move(i - 1) };
+    }
+    case 'session-breakout': {
+      const sr = sessionRange(c, p);
+      return { k: 'session-breakout', open: Math.round(p.open), hours: Math.round(p.hours), high: r6(sr.high[i]), low: r6(sr.low[i]) };
     }
     default:
       return { k: 'other' };

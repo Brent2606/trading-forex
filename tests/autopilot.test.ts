@@ -94,6 +94,19 @@ describe('deployment', () => {
     expect(ap.liveDeployments().map((d) => d.id)).toEqual([genomeId(ema)]);
   });
 
+  it('keeps room for other strategy families (at most a third of the slots, minimum two)', () => {
+    const { ap } = setup();
+    ap.state.config.maxDeployments = 8;
+    const don = (period: number) => normalize({ ...donchian, params: { period } });
+    // Six clearly different Donchian rules and one EMA crossover.
+    const many = [10, 25, 40, 55, 70, 85].map((p) => evaluation(don(p)));
+    const ema = evaluation(normalize({ ...donchian, strategy: 'ema-cross', params: { fast: 10, slow: 50 } }));
+    ap.sync([...many, ema]);
+    const fam = ap.liveDeployments().map((d) => d.genome.strategy);
+    expect(fam.filter((f) => f === 'donchian')).toHaveLength(3);
+    expect(fam.filter((f) => f === 'ema-cross')).toHaveLength(1);
+  });
+
   it('waits until the lab has tested enough strategies, and explore still needs validation', () => {
     const { ap } = setup();
     ap.sync([evaluation(donchian)], 20);

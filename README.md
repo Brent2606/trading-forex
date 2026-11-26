@@ -34,7 +34,7 @@ Requires Node 20+. No runtime dependencies; everything is TypeScript + Canvas.
 | **Risk guard** | Requires a stop on every trade, caps risk per trade (default 2%), limits open positions, and locks trading for the rest of the day after a daily loss limit (default 5%), optionally closing everything. |
 | **Positions / orders / history** | Live P/L in money and pips, break-even, close half, reverse, edit SL/TP/trailing, close all / winners / losers. History records R-multiples, max favourable/adverse excursion and the close reason. Copy history as CSV. |
 | **Performance** | Net P/L, win rate, profit factor, expectancy, average R, payoff ratio, max drawdown, streaks, SQN, balance curve, per-pair breakdown. |
-| **Backtester** | EMA crossover, RSI mean reversion, Bollinger breakout, MACD cross and Donchian breakout, with ATR stops/targets, risk-based sizing, trend filter, spread and commission. No look-ahead: signals on a bar's close fill at the next bar's open, and a bar that touches both stop and target counts as a loss. Trades are marked on the chart. |
+| **Backtester** | EMA crossover, RSI mean reversion, Bollinger breakout and reversion, MACD cross, Donchian breakout, momentum burst and session range breakout, with ATR stops/targets, risk-based sizing, trend filter, spread and commission. No look-ahead: signals on a bar's close fill at the next bar's open, and a bar that touches both stop and target counts as a loss. Trades are marked on the chart. |
 | **Real data import** | Load OHLC CSV exports from MetaTrader 4/5, Dukascopy, HistData or TradingView (or any `time,open,high,low,close` file) and backtest on real history. |
 | **Technical pulse & scanner** | A 17-indicator consensus gauge (10 moving averages + RSI, Stochastic, MACD, CCI, ADX, Williams %R, Momentum) for the chart, and a heat grid of every pair on M15/H1/H4/D1. It describes the chart; it is not a forecast. |
 | **Sessions, strength, correlation** | Sydney/Tokyo/London/New York sessions from the real time-zone database (DST-correct), with overlaps; a currency-strength meter; a correlation heatmap so you can see when two trades are really one bet. |
@@ -74,7 +74,9 @@ The **Autopilot** tab (or `auto on` / `lab on` on the command line) automates ev
   positive average, scaled by its live results, and is **benched** for good after a
   significantly negative record, 7 losses in a row or a 10R drawdown. An active strategy whose
   live results fall clearly below its historical promise is **demoted** back to probation.
-  Near-identical strategies are never deployed together. A stronger candidate
+  Near-identical strategies are never deployed together, and one strategy family gets at most
+  a third of the slots (minimum two), because strategies of one family tend to trade the same
+  moves. A stronger candidate
   can replace an untested probation strategy (at most every 10 minutes). Portfolio limits:
   max open positions, max positions per currency, no opposite positions on one pair, and the
   risk guard still applies.
@@ -178,6 +180,9 @@ NEONFX_CTRADER_ACCOUNT=<rekeningnummer, optioneel: anders het eerste demo-accoun
 * De bot gebruikt dan de echte koersen, spreads en koershistorie van de broker. Hij blijft op zijn
   eigen papieren rekening handelen; er gaan geen orders naar de broker.
 * Alleen demo-accounts en de demo-server: live-rekeningen worden geweigerd.
+* Het lab zoekt dan op de koersgeschiedenis van de broker zelf: de bot haalt op de achtergrond
+  ongeveer drie jaar uurdata op (en ververst die elke dag). Tot dat klaar is, of als het mislukt,
+  gebruikt het lab de CSV's in `data/history/`.
 * Tokens verlopen na ongeveer 30 dagen; de bot ververst ze zelf en bewaart ze in
   `data/ctrader-tokens.json`. Valt de verbinding weg, dan verbindt hij opnieuw en pauzeert het
   handelen tot er weer koersen zijn.

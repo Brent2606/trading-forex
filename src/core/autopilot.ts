@@ -330,10 +330,13 @@ export class Autopilot {
       this.deps.log(`AUTOPILOT deployed ${d.desc} on probation (${this.config.probationRiskPct}% risk)`, 'info');
     };
     const chosen = live.map((d) => d.genome);
+    // Strategies of one family tend to trade the same moves: keep room for the other families.
+    const perFamily = Math.max(2, Math.ceil(this.config.maxDeployments / 3));
     for (const sameFamily of [false, true]) {
       for (const e of eligible) {
         if (free <= 0) return;
         if (deployed.has(e.id) || chosen.some((g) => similarSignal(g, e.genome)) || (!sameFamily && families.has(e.genome.strategy))) continue;
+        if (chosen.filter((g) => g.strategy === e.genome.strategy).length >= perFamily) continue;
         chosen.push(e.genome);
         deploy(e);
       }
