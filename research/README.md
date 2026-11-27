@@ -307,6 +307,14 @@ yesterday's close, since today's open and since the home session opened, where t
 in today's range, how far into the day it is. Instead of currency strength: the market's move
 against the average of its group (indices, metals, oil).
 
+Added before the data arrived, after trying the scripts on made-up random walks (reported next
+to every result, not part of the bar): the average of all entries in the same market, hour and
+side that year. On random walks the model "beat" random entries by 0.04 to 0.08R without
+knowing anything about direction, simply by choosing the market and hour where a trade is
+cheapest; against entries in the same market, hour and side nothing was left. The same
+made-up data showed the pattern test to be fair: before costs every rule came out at zero,
+once the made-up prices moved in steps fine enough that a stop is not jumped over.
+
 **The bar, fixed here.** Seventeen cells are looked at (nine pattern rules; four confidence
 buckets for each of the two model settings). With that many, a t-value of 2 turns up by luck
 in one test round out of three, so:

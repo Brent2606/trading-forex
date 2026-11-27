@@ -31,7 +31,9 @@ Settings come from the environment:
   currency strength; no entry where the spread on the hour is unknown, on the first bar after a break
   or on the day's last bar; a stop that is jumped over is filled at the bar's open; with FLAT_HOUR a
   trade is also closed at the open of the day's last bar; and a second yardstick next to random
-  entries: the same sides at random times (a market that only goes up flatters every buyer)
+  entries: the same sides at random times (a market that only goes up flatters every buyer), and
+  the average of all entries in the same market, hour and side that year (what is left after that
+  is direction; a model can also beat random entries merely by picking the cheap hours)
   BOOKS=folder writes every trade of the run to <folder>/<LABEL>.csv (markets_verdict.py reads them)
 
 Usage: python ml_lab.py <hourly csv folder> <daily csv folder>
@@ -81,6 +83,8 @@ TRAIN_MONTHS = int(os.environ.get('TRAIN_MONTHS', 0))
 MAJORS = ['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD']
 QUANTILES = [0.90, 0.95, 0.98, 0.99]
 BOOK = ['pair', 'hour', 'side', 'r', 'day', 'pips']
+if MARKETS:
+    BOOK = BOOK + ['matched']   # the average result of every entry in the same market, hour and side that year
 # Real daily bars (the broker's own, DAILY_OHLC=1) or, from the free source, daily closes only.
 DAILY_OHLC = os.environ.get('DAILY_OHLC', '0') == '1'
 CLOSE_ONLY = TF == 'D1' and not DAILY_OHLC   # closes only: decisions and exits once a day, on the close
@@ -497,13 +501,19 @@ def main(hourly_folder, daily_folder):
                 mine = simulate(args[0], g['pl'].to_numpy(), g['ps'].to_numpy(), args[1], args[2], args[3], args[4], thr[q])
                 got += [t[0] for t in mine]
                 rnd[q] += random_trades(rng, *args, len(mine))
-                if MARKETS:
-                    same[q] += random_trades(rng_same, *args, len(mine), sides=[t[2] for t in mine])
                 # Where and when the model traded: entry hour on the broker's clock, side, pair.
                 hrs = server_hours(g.index + pd.Timedelta(hours=24 // BARS_PER_DAY)) if TF != 'D1' else np.zeros(len(g), dtype=int)
                 unit = g['u'].to_numpy()
+                extra = [()] * len(mine)
+                if MARKETS:
+                    same[q] += random_trades(rng_same, *args, len(mine), sides=[t[2] for t in mine])
+                    cell = {}
+                    for _, k, side in mine:
+                        if (hrs[k], side) not in cell:
+                            cell[(hrs[k], side)] = float(np.nanmean((args[1] if side == 1 else args[2])[hrs == hrs[k]]))
+                    extra = [(cell[(hrs[k], side)],) for _, k, side in mine]
                 # The day a trade belongs to: two hours ahead of UTC, so the Sunday-evening open counts as Monday.
-                book[q] += [(sym, int(hrs[k]), side, rr, (g.index[k] + pd.Timedelta(hours=2)).date(), rr * unit[k]) for rr, k, side in mine]
+                book[q] += [(sym, int(hrs[k]), side, rr, (g.index[k] + pd.Timedelta(hours=2)).date(), rr * unit[k]) + x for (rr, k, side), x in zip(mine, extra)]
             res[q][str(m)] = got
         print(f'  {m}: ' + ' · '.join(f'top {100 - q * 100:.0f}% {len(res[q][str(m)]):4d} tr {np.mean(res[q][str(m)]) if res[q][str(m)] else 0:+.3f}R' for q in QUANTILES) + f' ({time.time() - t0:.0f}s)', flush=True)
 
@@ -516,6 +526,10 @@ def main(hourly_folder, daily_folder):
         per_day = pd.DataFrame(book[q], columns=BOOK).groupby('day')['r'].sum()
         by_day = f' · per day t={per_day.mean() / (per_day.std(ddof=1) / np.sqrt(len(per_day))):+.2f}' if len(per_day) > 2 else ''
         print(line(f'top {100 - q * 100:.0f}%', allr, days, rnd[q], same[q] if MARKETS else None) + by_day + f' · periods up {pos}/{len(traded)} · 10,000 at 1% risk: {np.sum(allr) * 100:+,.0f}')
+        if MARKETS and len(book[q]) > 2:
+            b = pd.DataFrame(book[q], columns=BOOK)
+            dlt = b['r'] - b['matched']
+            print(f'           against all entries in the same market, hour and side that year ({b["matched"].mean():+.3f}R): {dlt.mean():+.3f}R (t={dlt.mean() / (dlt.std(ddof=1) / np.sqrt(len(dlt))):+.2f})')
     if SPLIT_YEAR:
         # Two blocks of unseen years: the choice of a setting is made on the first, the verdict on the second.
         all_days = pd.bdate_range(allf.index[allf.index >= months[MIN_TRAIN_MONTHS].start_time.tz_localize('UTC')].min().date(), allf.index.max().date())

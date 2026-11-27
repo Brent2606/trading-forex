@@ -34,6 +34,10 @@ def per_day(trades, days):
     return trades.groupby('day')['r'].sum().reindex(days, fill_value=0.0)
 
 
+def model_all_frame(trades):
+    return pd.concat(trades.values())
+
+
 def tval(x):
     sd = x.std(ddof=1)
     return float(x.mean() / (sd / np.sqrt(len(x)))) if sd > 0 else 0.0
@@ -81,6 +85,10 @@ def main(folder, split=2021):
                   f'(Sharpe {mean_daily.mean() / mean_daily.std(ddof=1) * np.sqrt(252):+.2f}) · up to {split} {avg_early:+.3f}R, after {avg_late:+.3f}R')
             print('          per seed (up to / after): ' + ' · '.join(f'{s[1:]}: {b[0]:+.3f} / {b[1]:+.3f}' for s, b in blocks.items()) +
                   f' · buys {buys:+.3f}R, sells {sells:+.3f}R ({share_sells * 100:.0f}% sells)')
+            if 'matched' in model_all_frame(trades).columns:
+                d = model_all_frame(trades)
+                dlt = d['r'] - d['matched']
+                print(f'          against all entries in the same market, hour and side that year: {dlt.mean():+.3f}R (t {dlt.mean() / (dlt.std(ddof=1) / np.sqrt(len(dlt))):+.2f}); the rest of the gap to random entries is the choice of market and hour')
             print(f'          same sides at random {same.mean():+.3f}R, model minus that {edge:+.3f}R (t {edge_t:+.2f}) · doubled costs {stress_r:+.3f}R · '
                   f'checks 1-5: {" ".join("yes" if c else "NO" for c in checks)}' + ('  <== CANDIDATE' if all(checks) else ''))
             if all(checks):
