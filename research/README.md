@@ -257,7 +257,69 @@ average is zero.
 One thing learned about the bench itself: at the most confident 1% a single run carries a
 noise of about ±0.06R from the seed alone. No setting should be believed on one seed.
 
-## Four traps this folder already fell into
+## Other markets: gold, oil and stock indices (plan written down 27 November 2026, before the data existed)
+
+**Why.** On currencies every real effect found so far is worth about what a trade costs: a
+round trip costs roughly 12% of what the price moves in an hour. On gold and on the large
+stock indices that share is expected to be a few percent, because they move far more per hour
+against their spread. That is an expectation from general knowledge, to be measured first.
+
+**Data.** `mt5/NeonfxExportMarkets.mq5` exports from the same IC Markets EU demo account:
+hourly, daily and quarter-hour bars, the hours each market trades, swap rates, and the spread
+per hour of the broker's clock measured from three weeks of ticks, three ways: per tick, per
+second, and in the first minute of the hour. Fifteen markets, fixed here: XAUUSD, XAGUSD,
+XTIUSD, XBRUSD, US500, USTEC, US30, US2000, DE40, UK100, F40, STOXX50, JP225, AUS200, HK50.
+A market counts in a verdict only with at least six years of hourly bars.
+
+**Costs, fixed here.**
+- Bars are bid prices; fills as at a broker. An entry or exit at the open of an hourly bar pays
+  the spread measured in the first minute of that hour; a stop or target inside a bar pays the
+  hour's average over time. Today's spread in points is used for every year.
+- No entry in an hour for which no spread could be measured, in broker hours 23, 0 and 1, or
+  on the first bar after any break in the bars (a reopening). A stop that is jumped over is
+  filled at the open of the bar, not at the stop.
+- Commission as the broker publishes it for this account: 7 dollars per lot round trip on
+  metals, none on indices. Its pages do not say for oil: charged as for metals, to be safe.
+- Slippage: half the market's average spread per round trip.
+- Stress test: spreads and slippage doubled.
+
+**Step 1, a measurement, no bar:** what a round trip costs as a share of the hourly move, per
+market and per hour of the day, today and over the years, next to the same figure for the
+sixteen currency pairs.
+
+**Step 2, the seven chart-pattern rules** of `patterns.py`, unchanged: same hours, 1R for 2R,
+day trades flat at 22:00. Only the units are adapted: the round number is the 1, 2.5 or 5
+times a power of ten closest to 1% of the price a year earlier. Pattern 7 may stay open up to
+five days and is charged the broker's own swap for every night; a short is also charged an
+estimated dividend yield, a long is not credited one (so both sides err against the trade).
+Two more rules for indices with a home session, fixed here: (8) false breakout and (9)
+breakout of the range built before the home session opens (from 02:00 until 10:00 for DE40,
+UK100, F40 and STOXX50; until 17:00, which includes the first half hour of cash trading, for
+US500, USTEC, US30 and US2000), taken in the first five hours after that.
+
+**Step 3, the learning model** (`ml_lab.py` with `MARKETS=1`), a new model every year trained
+on the four years before, as on currencies. Two settings, each run with three random seeds
+(7, 11, 23) from the start:
+- M1: day trade with stop and target, 1.5 ATR each, flat at 23:00;
+- M2: no stop or target, in for four hours and out, within one broker day.
+Both with the clock features and with a few numbers every day trader looks at: the move since
+yesterday's close, since today's open and since the home session opened, where the price sits
+in today's range, how far into the day it is. Instead of currency strength: the market's move
+against the average of its group (indices, metals, oil).
+
+**The bar, fixed here.** Seventeen cells are looked at (nine pattern rules; four confidence
+buckets for each of the two model settings). With that many, a t-value of 2 turns up by luck
+in one test round out of three, so:
+1. after all costs a per-day t-value of at least 3 over all unseen years (for a model: on the
+   average of the three seeds);
+2. positive in both blocks of years, up to 2021 and after (patterns: in three of four periods);
+3. models: every seed positive in both blocks;
+4. not the market simply going up: sells must not lose, and a model must beat the same number
+   of trades on the same sides entered at random times;
+5. still not negative with doubled spreads and slippage.
+A cell that clears all five is a candidate; it then has to hold with neighbouring settings
+before anything is proposed for the bot. A t-value between 2 and 3 is a lead, not a result.
+
 ## Four traps this folder already fell into
 
 1. **Asking the data source for "all" daily history returns monthly bars.** The first trend
