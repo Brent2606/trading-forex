@@ -127,6 +127,7 @@ def build(closes, rates, k, shuffle=None):
     w = w.ffill().shift(1)   # decided on the month's first close, held from the next day
     return {
         'w': w, 'spot': spot, 'rate': rate, 'pairs': list(px.columns), 'valid': w.notna().all(axis=1),
+        'usd': usd, 'ccys': ccys, 'month_start': month_start,
         'days': pd.Series(usd.index, index=usd.index).diff().dt.days.fillna(1).clip(upper=5),
         'cost_frac': pd.Series({c: cost_pips(USD_PAIR[c]) * pip(USD_PAIR[c]) for c in px}) / px,
     }
