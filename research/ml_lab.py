@@ -24,6 +24,8 @@ Settings come from the environment:
   SKIP_HOURS=23,0,1 allows no entries in those hours of the broker's clock (the daily rollover)
   FLAT_HOUR=23 closes every trade when that broker hour starts (nothing open during the rollover)
   SPREAD_MULT=2, EXTRA_COST_PIPS=0.5: stress tests on costs
+  EXIT=time holds a trade HORIZON bars and closes it (no stop or target), within one broker day
+  CLOCK=1 adds the pair's own habit at this hour of the day; SPLIT_YEAR=2021 reports two blocks
 
 Usage: python ml_lab.py <hourly csv folder> <daily csv folder>
 """
@@ -55,10 +57,18 @@ FLAT_HOUR = int(os.environ['FLAT_HOUR']) if os.environ.get('FLAT_HOUR', '') != '
 # Stress test: multiply the measured spreads, and add extra cost in pips to every trade.
 SPREAD_MULT = float(os.environ.get('SPREAD_MULT', 1))
 EXTRA_COST_PIPS = float(os.environ.get('EXTRA_COST_PIPS', 0))
+# EXIT=time: no stop or target; hold HORIZON bars and get out, always within the same broker day and
+# away from the rollover hours. "Win" then simply means: money made after costs.
+EXIT = os.environ.get('EXIT', 'barrier')
+# CLOCK=1 adds what the clock tests showed to be real: the pair's own habit at this hour and the broker hour.
+CLOCK = os.environ.get('CLOCK', '0') == '1'
+# SPLIT_YEAR=2021 reports the unseen years up to and after that year apart: choose on the first, judge on the second.
+SPLIT_YEAR = int(os.environ.get('SPLIT_YEAR', 0))
 # Train on the last TRAIN_MONTHS only (0 = on everything before the test period).
 TRAIN_MONTHS = int(os.environ.get('TRAIN_MONTHS', 0))
 MAJORS = ['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD']
 QUANTILES = [0.90, 0.95, 0.98, 0.99]
+BOOK = ['pair', 'hour', 'side', 'r', 'day', 'pips']
 # Real daily bars (the broker's own, DAILY_OHLC=1) or, from the free source, daily closes only.
 DAILY_OHLC = os.environ.get('DAILY_OHLC', '0') == '1'
 CLOSE_ONLY = TF == 'D1' and not DAILY_OHLC   # closes only: decisions and exits once a day, on the close
@@ -156,6 +166,14 @@ def features(sym, df, strength):
         f['hour_sin'] = np.sin(2 * np.pi * hour / 24)
         f['hour_cos'] = np.cos(2 * np.pi * hour / 24)
     f['dow'] = df.index.dayofweek
+    if CLOCK and TF != 'D1':
+        srv = server_hours(df.index)
+        f['broker_hour'] = srv
+        # The pair's own habit: its average move over the next HORIZON bars from this hour of the day, over
+        # about the last three years. The two latest days are left out, so no move that is still
+        # running (or still to come) can leak in.
+        ahead = (o.shift(-(HORIZON + 1)) - o.shift(-1)) / a
+        f['habit'] = ahead.groupby(srv).transform(lambda x: x.rolling(750, min_periods=250).mean().shift(2 if HORIZON <= 20 else 3))
     base, quote = sym[:3], sym[3:]
     for k, s in strength.items():
         f[f'strength_{k}'] = (s[base] - s[quote]).reindex(df.index)
@@ -210,7 +228,9 @@ def barrier_outcomes(sym, df, a):
         sp_open = sp_bar = np.zeros(n)
         cost = cost_pips(sym) * pip(sym)
     cost += EXTRA_COST_PIPS * pip(sym)
-    srv = server_hours(df.index) if (SKIP_HOURS or FLAT_HOUR is not None) and TF != 'D1' else None
+    srv = server_hours(df.index) if (SKIP_HOURS or FLAT_HOUR is not None or EXIT == 'time') and TF != 'D1' else None
+    if EXIT == 'time':   # the broker day of every bar, to keep a trade inside one day
+        day = (df.index.tz_convert('America/New_York').tz_localize(None) + pd.Timedelta(hours=7)).normalize().asi8
     res = {}
     for side in (1, -1):
         r = np.full(n, np.nan)
@@ -226,6 +246,15 @@ def barrier_outcomes(sym, df, a):
             e = o[i + 1] + (sp_open[i + 1] if side == 1 else 0.0)
             sl = SL_ATR * av[i]
             tp = TP_ATR * av[i]
+            if EXIT == 'time':
+                j = i + 1 + HORIZON   # out at the open of this bar: a long at the bid, a short at the ask
+                if day[j] != day[i + 1] or srv[j] in (23, 0, 1) or srv[i + 1] in (23, 0, 1):
+                    continue
+                pnl = (o[j] + (0.0 if side == 1 else sp_open[j]) - e) * side - cost
+                r[i] = pnl / sl   # in units of 1.5 x ATR, to compare with the other tests; no stop is placed
+                exit_i[i] = j - 1
+                win[i] = 1.0 if pnl > 0 else 0.0
+                continue
             out = None
             for j in range(i + 1, i + 1 + HORIZON):
                 if srv is not None and FLAT_HOUR is not None and j > i + 1 and srv[j] == FLAT_HOUR:
@@ -322,12 +351,13 @@ def main(hourly_folder, daily_folder):
         bo = barrier_outcomes(sym, df, a)
         f['sym'] = sym
         f['i'] = np.arange(len(df))
+        f['u'] = (SL_ATR * a / pip(sym)).to_numpy()   # one R in pips
         for side, name in ((1, 'l'), (-1, 's')):
             r, x, w = bo[side]
             f[f'r_{name}'], f[f'x_{name}'], f[f'w_{name}'] = r, x, w
         rows.append(f)
     allf = pd.concat(rows).dropna().sort_index()
-    meta = ('sym', 'i', 'r_l', 'r_s', 'x_l', 'x_s', 'w_l', 'w_s')
+    meta = ('sym', 'i', 'u', 'r_l', 'r_s', 'x_l', 'x_s', 'w_l', 'w_s')
     feat = [c for c in allf.columns if c not in meta]
     print(f'##### {LABEL}: {TF} bars, stop {SL_ATR}×ATR, target {TP_ATR}×ATR (1:{TP_ATR / SL_ATR:g}), at most {HORIZON} bars, '
           f'{"with" if HTF else "without"} the longer-term picture, {len(pairs)} pairs, '
@@ -335,6 +365,8 @@ def main(hourly_folder, daily_folder):
           + (f', trained on the last {TRAIN_MONTHS} months' if TRAIN_MONTHS else '')
           + (f', no entries in broker hours {sorted(SKIP_HOURS)}' if SKIP_HOURS else '')
           + (f', flat at broker hour {FLAT_HOUR}' if FLAT_HOUR is not None else '')
+          + (f', no stop or target: out after {HORIZON} bars within the broker day' if EXIT == 'time' else '')
+          + (', with clock features' if CLOCK else '')
           + (f', spreads ×{SPREAD_MULT:g}' if SPREAD_MULT != 1 else '') + (f', +{EXTRA_COST_PIPS:g} pips cost' if EXTRA_COST_PIPS else ''))
     print(f'{len(allf)} samples, {len(feat)} features, {allf.index.min():%Y-%m-%d} to {allf.index.max():%Y-%m-%d} · '
           f'a trade wins {allf[["w_l", "w_s"]].to_numpy().mean() * 100:.0f}% of the time by chance ({time.time() - t0:.0f}s)', flush=True)
@@ -374,7 +406,9 @@ def main(hourly_folder, daily_folder):
                 rnd[q] += random_trades(rng, *args, len(mine))
                 # Where and when the model traded: entry hour on the broker's clock, side, pair.
                 hrs = server_hours(g.index + pd.Timedelta(hours=24 // BARS_PER_DAY)) if TF != 'D1' else np.zeros(len(g), dtype=int)
-                book[q] += [(sym, int(hrs[k]), side, rr, g.index[k].date()) for rr, k, side in mine]
+                unit = g['u'].to_numpy()
+                # The day a trade belongs to: two hours ahead of UTC, so the Sunday-evening open counts as Monday.
+                book[q] += [(sym, int(hrs[k]), side, rr, (g.index[k] + pd.Timedelta(hours=2)).date(), rr * unit[k]) for rr, k, side in mine]
             res[q][str(m)] = got
         print(f'  {m}: ' + ' · '.join(f'top {100 - q * 100:.0f}% {len(res[q][str(m)]):4d} tr {np.mean(res[q][str(m)]) if res[q][str(m)] else 0:+.3f}R' for q in QUANTILES) + f' ({time.time() - t0:.0f}s)', flush=True)
 
@@ -384,12 +418,29 @@ def main(hourly_folder, daily_folder):
         traded = [rr for rr in res[q].values() if len(rr) >= 5]
         pos = sum(1 for rr in traded if np.sum(rr) > 0)
         # Trades on the same day move together, so the honest yardstick is the result per day.
-        per_day = pd.DataFrame(book[q], columns=['pair', 'hour', 'side', 'r', 'day']).groupby('day')['r'].sum()
+        per_day = pd.DataFrame(book[q], columns=BOOK).groupby('day')['r'].sum()
         by_day = f' · per day t={per_day.mean() / (per_day.std(ddof=1) / np.sqrt(len(per_day))):+.2f}' if len(per_day) > 2 else ''
         print(line(f'top {100 - q * 100:.0f}%', allr, days, rnd[q]) + by_day + f' · periods up {pos}/{len(traded)} · 10,000 at 1% risk: {np.sum(allr) * 100:+,.0f}')
+    if SPLIT_YEAR:
+        # Two blocks of unseen years: the choice of a setting is made on the first, the verdict on the second.
+        all_days = pd.bdate_range(allf.index[allf.index >= months[MIN_TRAIN_MONTHS].start_time.tz_localize('UTC')].min().date(), allf.index.max().date())
+        for name, block in ((f'years up to {SPLIT_YEAR}', all_days[all_days.year <= SPLIT_YEAR]), (f'years after {SPLIT_YEAR}', all_days[all_days.year > SPLIT_YEAR])):
+            print(f'\n--- {name} ({len(block)} trading days), per bucket: trades, mean R, mean pips, result per day')
+            for q in QUANTILES:
+                b = pd.DataFrame(book[q], columns=BOOK)
+                b = b[pd.to_datetime(b['day']).isin(block)]
+                daily = b.groupby('day')['r'].sum()
+                daily.index = pd.to_datetime(daily.index)
+                daily = daily.reindex(block, fill_value=0.0)
+                sd = daily.std(ddof=1)
+                if len(b) < 20 or not sd > 0:
+                    print(f'top {100 - q * 100:.0f}%  {len(b)} trades')
+                    continue
+                print(f'top {100 - q * 100:.0f}%  {len(b):6d} trades · mean {b["r"].mean():+.3f}R · {b["pips"].mean():+.2f} pips · '
+                      f'Sharpe {daily.mean() / sd * np.sqrt(252):+.2f} (t={daily.mean() / (sd / np.sqrt(len(daily))):+.2f}) · 10,000 at 1% risk: {b["r"].sum() * 100:+,.0f}')
     # Where the result comes from. An edge that sits in one hour, one side or one pair is suspect.
     for q in (0.95, 0.99):
-        b = pd.DataFrame(book[q], columns=['pair', 'hour', 'side', 'r', 'day'])
+        b = pd.DataFrame(book[q], columns=BOOK)
         if len(b) < 50:
             continue
         print(f'\n--- top {100 - q * 100:.0f}%: where the result comes from (trades, mean R)')
