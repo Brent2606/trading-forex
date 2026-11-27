@@ -88,7 +88,12 @@ def main(folder, split=2021):
             if 'matched' in model_all_frame(trades).columns:
                 d = model_all_frame(trades)
                 dlt = d['r'] - d['matched']
-                print(f'          against all entries in the same market, hour and side that year: {dlt.mean():+.3f}R (t {dlt.mean() / (dlt.std(ddof=1) / np.sqrt(len(dlt))):+.2f}); the rest of the gap to random entries is the choice of market and hour')
+                print(f'          against all entries in the same market, hour and side that year: {dlt.mean():+.3f}R (t {dlt.mean() / (dlt.std(ddof=1) / np.sqrt(len(dlt))):+.2f})')
+                if 'other' in d.columns and d['other'].notna().sum() > 2:
+                    two = d.dropna(subset=['other'])
+                    direction = (two['r'] - two['other']) / 2
+                    daily_dir = direction.groupby(two['day']).sum()
+                    print(f'          choosing the side is worth {direction.mean():+.3f}R (per-day t {tval(daily_dir):+.2f}); a trade at the moments the model picks costs {-(two["r"] + two["other"]).mean() / 2:.3f}R on either side')
             print(f'          same sides at random {same.mean():+.3f}R, model minus that {edge:+.3f}R (t {edge_t:+.2f}) · doubled costs {stress_r:+.3f}R · '
                   f'checks 1-5: {" ".join("yes" if c else "NO" for c in checks)}' + ('  <== CANDIDATE' if all(checks) else ''))
             if all(checks):

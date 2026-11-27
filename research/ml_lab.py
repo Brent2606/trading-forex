@@ -86,7 +86,9 @@ MAJORS = ['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD']
 QUANTILES = [0.90, 0.95, 0.98, 0.99]
 BOOK = ['pair', 'hour', 'side', 'r', 'day', 'pips']
 if MATCHED:
-    BOOK = BOOK + ['matched']   # the average result of every entry in the same market, hour and side that year
+    # 'matched': the average result of every entry in the same market, hour and side that year;
+    # 'other': the result of the opposite trade entered on the very same bar.
+    BOOK = BOOK + ['matched', 'other']
 # Real daily bars (the broker's own, DAILY_OHLC=1) or, from the free source, daily closes only.
 DAILY_OHLC = os.environ.get('DAILY_OHLC', '0') == '1'
 CLOSE_ONLY = TF == 'D1' and not DAILY_OHLC   # closes only: decisions and exits once a day, on the close
@@ -514,7 +516,7 @@ def main(hourly_folder, daily_folder):
                     for _, k, side in mine:
                         if (hrs[k], side) not in cell:
                             cell[(hrs[k], side)] = float(np.nanmean((args[1] if side == 1 else args[2])[hrs == hrs[k]]))
-                    extra = [(cell[(hrs[k], side)],) for _, k, side in mine]
+                    extra = [(cell[(hrs[k], side)], float((args[2] if side == 1 else args[1])[k])) for _, k, side in mine]
                 # The day a trade belongs to: two hours ahead of UTC, so the Sunday-evening open counts as Monday.
                 book[q] += [(sym, int(hrs[k]), side, rr, (g.index[k] + pd.Timedelta(hours=2)).date(), rr * unit[k]) + x for (rr, k, side), x in zip(mine, extra)]
             res[q][str(m)] = got
@@ -533,6 +535,16 @@ def main(hourly_folder, daily_folder):
             b = pd.DataFrame(book[q], columns=BOOK)
             dlt = b['r'] - b['matched']
             print(f'           against all entries in the same market, hour and side that year ({b["matched"].mean():+.3f}R): {dlt.mean():+.3f}R (t={dlt.mean() / (dlt.std(ddof=1) / np.sqrt(len(dlt))):+.2f})')
+            # The opposite trade on the same bar pays the same costs at the same moment. Half the gap between
+            # the two is what choosing the side was worth (direction); their average is what a trade costs at
+            # the moments the model picks, whatever its side.
+            two = b.dropna(subset=['other'])
+            if len(two) > 2:
+                direction = (two['r'] - two['other']) / 2
+                per_day = direction.groupby(two['day']).sum()
+                print(f'           the opposite trade on the same bars: {two["other"].mean():+.3f}R · choosing the side is worth {direction.mean():+.3f}R '
+                      f'(t={direction.mean() / (direction.std(ddof=1) / np.sqrt(len(direction))):+.2f}, per day t={per_day.mean() / (per_day.std(ddof=1) / np.sqrt(len(per_day))):+.2f}) · '
+                      f'a trade at these moments costs {-(two["r"] + two["other"]).mean() / 2:.3f}R on either side')
     if SPLIT_YEAR:
         # Two blocks of unseen years: the choice of a setting is made on the first, the verdict on the second.
         all_days = pd.bdate_range(allf.index[allf.index >= months[MIN_TRAIN_MONTHS].start_time.tz_localize('UTC')].min().date(), allf.index.max().date())
