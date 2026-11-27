@@ -19,20 +19,59 @@ COMMISSION_PIPS = 0.7
 SLIP_PIPS = 0.3
 
 
-def pip(sym):
-    return 0.01 if sym.endswith('JPY') else 0.0001
-
-
 # Measured spreads (icm_import.py writes spreads.json): set SPREADS=/path/spreads.json to use them.
 SPREAD_PROFILE = None
 if os.environ.get('SPREADS'):
     with open(os.environ['SPREADS']) as _f:
         SPREAD_PROFILE = json.load(_f)
 
+# Markets other than currencies (icm_import_markets.py): the group each belongs to and, on the
+# broker's clock, the first and last hour of its home session (the bars that open in those hours).
+GROUP = {'XAUUSD': 'metal', 'XAGUSD': 'metal', 'XTIUSD': 'oil', 'XBRUSD': 'oil',
+         'US500': 'index', 'USTEC': 'index', 'US30': 'index', 'US2000': 'index', 'DE40': 'index', 'UK100': 'index',
+         'F40': 'index', 'STOXX50': 'index', 'JP225': 'index', 'AUS200': 'index', 'HK50': 'index'}
+HOME = {'XAUUSD': (15, 20), 'XAGUSD': (15, 20), 'XTIUSD': (16, 21), 'XBRUSD': (16, 21),
+        'US500': (16, 22), 'USTEC': (16, 22), 'US30': (16, 22), 'US2000': (16, 22),
+        'DE40': (10, 18), 'UK100': (10, 18), 'F40': (10, 18), 'STOXX50': (10, 18),
+        'JP225': (3, 8), 'AUS200': (3, 6), 'HK50': (5, 9)}
+
+
+def pip(sym):
+    """The price unit results are reported in: a pip for currencies; for other markets the unit their
+    spread profile names (an index point, 10 cents of gold, a cent of silver or oil)."""
+    prof = (SPREAD_PROFILE or {}).get(sym)
+    if prof and 'pip' in prof:
+        return prof['pip']
+    return 0.01 if sym.endswith('JPY') else 0.0001
+
 
 def server_hours(index):
     """Hour on the broker's clock (New York + 7 h) for each bar."""
     return (index.tz_convert('America/New_York').tz_localize(None) + pd.Timedelta(hours=7)).hour.to_numpy()
+
+
+def server_days(index):
+    """The broker's trading day of each bar (it ends at the New York close), as a date."""
+    return (index.tz_convert('America/New_York').tz_localize(None) + pd.Timedelta(hours=7)).normalize()
+
+
+def hour_profiles(sym, mult=1.0):
+    """The measured spread per hour of the broker's clock, in price: (at the open of an hourly bar,
+    on average while the bar forms). The first is NaN where the profile says the spread at the top of
+    that hour could not be measured (other markets only): no entry is allowed there.
+
+    Currencies have one figure per hour (the average over ticks) that serves for both."""
+    prof = SPREAD_PROFILE[sym]
+    typical = prof['tick_weighted']
+    during = np.array([np.nan if v is None else v for v in prof['by_server_hour']], dtype=float)
+    if 'open_by_server_hour' in prof:
+        at_open = np.array([np.nan if v is None else v for v in prof['open_by_server_hour']], dtype=float)
+        # Getting out in an hour without a measurement is charged the widest spread that was measured.
+        during = np.where(np.isfinite(during), during, np.nanmax(during))
+    else:
+        during = np.where(np.isfinite(during), during, typical)
+        at_open = during
+    return at_open * mult * pip(sym), during * mult * pip(sym)
 
 
 def cost_pips(sym):
@@ -45,7 +84,7 @@ def load_hourly(folder):
     """Hourly CSVs written by scripts/fetch-history.mjs (time,open,high,low,close)."""
     out = {}
     for f in sorted(glob.glob(os.path.join(folder, '*_H1_real.csv'))):
-        sym = os.path.basename(f)[:6]
+        sym = os.path.basename(f)[:-len('_H1_real.csv')]
         df = pd.read_csv(f)
         df['time'] = pd.to_datetime(df['time'], unit='s', utc=True)
         df = df.drop_duplicates('time').set_index('time').sort_index()

@@ -372,4 +372,8 @@ docker run --rm -v /opt/neonfx-research:/work -w /work neonfx-research python ca
 docker run --rm -v /opt/neonfx-research:/work -w /work neonfx-research python fx_styles.py icm/daily rates icm_raw/meta.csv
 docker run --rm -e SPREADS=/work/icm/spreads.json -v /opt/neonfx-research:/work -w /work neonfx-research python clock_effects.py icm/hourly rates icm_raw/meta.csv
 ./stack_icm.sh                            # the learning model with clock features, intraday with a fixed holding time
+
+# gold, oil and stock indices: run mt5/NeonfxExportMarkets.mq5 in MetaTrader 5, copy MQL5/Files/neonfx_markets/* to mkt_raw/
+docker run --rm -v /opt/neonfx-research:/work -w /work neonfx-research python icm_import_markets.py mkt_raw mkt
+./markets_icm.sh                          # costs against the hourly move, the pattern rules, the learning model, the verdict
 ```

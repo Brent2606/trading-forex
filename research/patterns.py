@@ -35,14 +35,27 @@ positive result in at least three of the four periods. With seven patterns teste
 reaching t = 2 by luck alone is likely; the periods are there to catch that.
 
 Usage: SPREADS=<spreads.json> python patterns.py <hourly folder> <rates folder>
+
+MARKETS=1 runs the same rules on gold, oil and stock indices (icm_import_markets.py; the plan and
+the bar are in README.md, written before that data existed):
+  - the round number is the 1, 2.5 or 5 times a power of ten closest to 1% of the price a year earlier;
+  - an entry pays the spread measured on the hour; none where that is unknown, on the first bar
+    after a break or on the day's last bar; day trades are also closed at the open of the day's last bar;
+  - pattern 7 is charged the broker's own swap per night, and a short an estimated dividend yield;
+  - two more rules for indices with a home session:
+      8. false breakout and 9. breakout of the range built before the home session opens (02:00 to
+         10:00 for European indices, to 17:00 for US indices), in the first five hours after that;
+  - the bar: per-day t of at least 3, positive in three of four periods, and sells must not lose.
+SPREAD_MULT=2 doubles spreads and slippage (the stress test).
 """
+import os
 import sys
 
 import numpy as np
 import pandas as pd
 
 from carry_daily import load_rates
-from common import COMMISSION_PIPS, SLIP_PIPS, SPREAD_PROFILE, atr, load_hourly, pip, server_hours
+from common import COMMISSION_PIPS, GROUP, SLIP_PIPS, SPREAD_PROFILE, atr, hour_profiles, load_hourly, pip, server_hours
 
 REWARD = 2.0                    # target = 2 x the risk
 MARKUP = 0.0104                 # the broker's cut on overnight interest, per year (read from its swap rates)
@@ -51,6 +64,12 @@ FIRST, LAST = 3, 20             # entries between these broker hours (the bar th
 FLAT = 22
 PERIODS = [(2010, 2014), (2015, 2018), (2019, 2022), (2023, 2026)]
 BAR_SHARPE, BAR_T = 0.5, 2.0
+MARKETS = os.environ.get('MARKETS', '0') == '1'
+MIN_YEARS = float(os.environ.get('MIN_YEARS', 6))
+SPREAD_MULT = float(os.environ.get('SPREAD_MULT', 1))
+BAR_T_MARKETS = 3.0
+# The hour (broker clock) at which the home session counts as open; the range before it runs from 02:00.
+HOME_OPEN = {'DE40': 10, 'UK100': 10, 'F40': 10, 'STOXX50': 10, 'US500': 17, 'USTEC': 17, 'US30': 17, 'US2000': 17}
 NAMES = {
     1: 'false breakout of yesterday\'s high / low',
     2: 'false breakout of the night range',
@@ -60,6 +79,23 @@ NAMES = {
     6: 'breakout of yesterday\'s high / low',
     7: 'trend with a pullback',
 }
+if MARKETS:
+    NAMES.update({8: 'false breakout of the range before the home session', 9: 'breakout of the range before the home session'})
+
+
+def round_steps(t, c):
+    """Per bar the round-number step: the 1, 2.5 or 5 times a power of ten closest to 1% of the price a
+    year earlier (so the step grows with the market and never looks ahead)."""
+    past = np.searchsorted(t.asi8, (t - pd.Timedelta(days=365)).asi8, side='right') - 1
+    ref = np.where(past >= 0, c[np.maximum(past, 0)], np.nan) * 0.01
+    with np.errstate(invalid='ignore', divide='ignore'):
+        power = 10.0 ** np.floor(np.log10(ref))
+        best = np.full(len(c), np.nan)
+        for m in (1, 2.5, 5, 10):
+            cand = m * power
+            closer = ~(np.abs(np.log(best / ref)) <= np.abs(np.log(cand / ref)))
+            best = np.where(closer, cand, best)
+    return np.where(np.isfinite(ref), best, np.nan)
 
 
 def prepare(pair, df, rates):
@@ -91,10 +127,41 @@ def prepare(pair, df, rates):
     prof = (SPREAD_PROFILE or {}).get(pair)
     if not prof:
         raise SystemExit('Set SPREADS to the broker spread profile (icm_import.py writes it)')
+    first_bar = np.r_[False, day_id[1:] != day_id[:-1]]
+    if MARKETS:
+        at_open, during = hour_profiles(pair, SPREAD_MULT)
+        sp_open, sp = at_open[srv], during[srv]
+        cost = (prof.get('commission_pips', 0.0) + prof.get('slip_pips', 0.0) * SPREAD_MULT) * pip(pair)
+        # No entry where the spread on the hour is unknown, on the first bar after a break, or on the day's last bar.
+        last_bar = np.r_[day_id[1:] != day_id[:-1], True]
+        contiguous = np.r_[False, (df.index[1:] - df.index[:-1]) == pd.Timedelta(hours=1)]
+        can_enter = np.isfinite(sp_open) & contiguous & ~last_bar
+        sp_exit = np.where(np.isfinite(sp_open), sp_open, np.nanmax(sp_open))
+        # The broker's swap, booked at each rollover: three nights after the day the broker names. A short
+        # also pays the dividends that drop out of an index while it is held (per calendar night).
+        prev_dow = np.r_[0, day.dayofweek[:-1]]
+        nights = np.where(first_bar, np.where(prev_dow == prof.get('swap_3day', 4), 3, 1), 0)
+        calendar = np.where(first_bar, np.r_[0, np.asarray((day[1:] - day[:-1]) / pd.Timedelta(days=1), dtype=float)], 0)
+        swap_l = np.cumsum(nights * np.nan_to_num(prof.get('swap_long_rate', 0.0)) * o)
+        swap_s = np.cumsum(nights * np.nan_to_num(prof.get('swap_short_rate', 0.0)) * o - calendar * prof.get('dividend_yield', 0.0) / 365 * o)
+        # The range before the home session: from 02:00 until the hour the home session counts as open.
+        home = HOME_OPEN.get(pair)
+        if home is not None:
+            before = (srv >= 2) & (srv < home)
+            bf = pd.DataFrame({'day': day_id, 'h': np.where(before, h, np.nan), 'l': np.where(before, l, np.nan), 'k': before.astype(int)})
+            per_before = bf.groupby('day').agg(h=('h', 'max'), l=('l', 'min'), k=('k', 'sum'))
+            ok_home = (per_before['k'] >= 5).reindex(day_id).to_numpy() & (srv >= home) & (srv <= home + 4)
+            hh = np.where(ok_home, per_before['h'].reindex(day_id).to_numpy(), np.nan)
+            hl = np.where(ok_home, per_before['l'].reindex(day_id).to_numpy(), np.nan)
+        else:
+            hh = hl = np.full(n, np.nan)
+        return dict(pair=pair, t=df.index, o=o, h=h, l=l, c=c, n=n, srv=srv, day=day_id, a=a, pdh=pdh, pdl=pdl, nh=nh, nl=nl,
+                    run_h=run_h, run_l=run_l, e50=e50, e200=e200, sp=sp, sp_open=sp_open, sp_exit=sp_exit, cost=cost,
+                    can_enter=can_enter, last_bar=last_bar, swap_l=swap_l, swap_s=swap_s, hh=hh, hl=hl,
+                    step=round_steps(df.index, c))
     by_hour = np.array([prof['tick_weighted'] if v is None else v for v in prof['by_server_hour']]) * pip(pair)
     cost = (prof.get('commission_pips', COMMISSION_PIPS) + SLIP_PIPS) * pip(pair)
     # Interest booked at each rollover: one night, three on the night to Thursday.
-    first_bar = np.r_[False, day_id[1:] != day_id[:-1]]
     nights = np.where(first_bar, np.where(day.dayofweek == 3, 3, 1), 0)
     base, quote = pair[:3], pair[3:]
     diff = np.zeros(n)
@@ -136,7 +203,7 @@ def signals(P):
     add((h <= pdh) & (h >= pdh - tol) & (up_wick >= 0.4) & (c < o) & fresh_h, 3, -1, pdh + 0.5 * a)
     add((l >= pdl) & (l <= pdl + tol) & (dn_wick >= 0.4) & (c > o) & fresh_l, 3, 1, pdl - 0.5 * a)
     # 4. bounce at a round number (every 100 pips)
-    step = 100 * pip(P['pair'])
+    step = P['step'] if MARKETS else 100 * pip(P['pair'])
     above = np.ceil((h - tol) / step) * step        # the level this bar's high reached for
     below = np.floor((l + tol) / step) * step
     add((np.abs(h - above) <= tol) & (up_wick >= 0.4) & (c < o) & (c < above), 4, -1, above + 0.5 * a)
@@ -154,6 +221,17 @@ def signals(P):
     falling = e50 < np.r_[np.full(24, np.nan), e50[:-24]]
     add((e50 > e200) & rising & (l <= e50) & (c > e50) & (c > o), 7, 1, l - 0.3 * a)
     add((e50 < e200) & falling & (h >= e50) & (c < e50) & (c < o), 7, -1, h + 0.3 * a)
+    if MARKETS:
+        hh, hl = P['hh'], P['hl']           # the range before the home session; NaN outside its five hours
+        hfresh_h = ~(run_h > hh)
+        hfresh_l = ~(run_l < hl)
+        # 8. false breakout of the range before the home session
+        add((h > hh) & (c < hh) & hfresh_h, 8, -1, h + 0.1 * a)
+        add((l < hl) & (c > hl) & hfresh_l, 8, 1, l - 0.1 * a)
+        # 9. breakout of the range before the home session
+        hmid = (hh + hl) / 2
+        add((c > hh) & hfresh_h & ~(np.r_[np.nan, c[:-1]] > hh), 9, 1, hmid)
+        add((c < hl) & hfresh_l & ~(np.r_[np.nan, c[:-1]] < hl), 9, -1, hmid)
     out.sort()
     return out
 
@@ -164,7 +242,14 @@ def trade(P, i, side, stop, day_trade):
     e_bar = i + 1
     if e_bar >= P['n'] - 1:
         return None
-    entry = o[e_bar] + (sp[e_bar] if side == 1 else 0.0)        # a buy opens at the ask
+    if MARKETS:
+        if not P['can_enter'][e_bar]:
+            return None
+        sp_in, sp_out, last_bar = P['sp_open'], P['sp_exit'], P['last_bar']    # the spread on the hour, in and out
+    else:
+        sp_in = sp_out = sp
+        last_bar = None
+    entry = o[e_bar] + (sp_in[e_bar] if side == 1 else 0.0)        # a buy opens at the ask
     risk = (entry - stop) * side
     if not (0.5 * P['a'][i] <= risk <= 4 * P['a'][i]):
         return None
@@ -172,8 +257,8 @@ def trade(P, i, side, stop, day_trade):
     last = min(P['n'] - 1, e_bar + (10_000 if day_trade else 120))
     pnl, x = None, e_bar
     for j in range(e_bar, last + 1):
-        if j > e_bar and (day[j] != day[e_bar] or srv[j] >= FLAT) and day_trade:
-            pnl, x = (o[j] + (0.0 if side == 1 else sp[j]) - entry) * side, j     # flat at 22:00, at the open
+        if j > e_bar and (day[j] != day[e_bar] or srv[j] >= FLAT or (last_bar is not None and last_bar[j])) and day_trade:
+            pnl, x = (o[j] + (0.0 if side == 1 else sp_out[j]) - entry) * side, j     # flat at 22:00, at the open
             break
         # What this side can get out at: a long sells at the bid, a short buys at the ask.
         hi, lo, op = (h[j], l[j], o[j]) if side == 1 else (h[j] + sp[j], l[j] + sp[j], o[j] + sp[j])
@@ -200,9 +285,13 @@ def trade(P, i, side, stop, day_trade):
     if pnl is None:
         x = last
         pnl = (c[x] + (0.0 if side == 1 else sp[x]) - entry) * side
-    swap = side * (P['interest'][x] - P['interest'][e_bar]) - (P['markup'][x] - P['markup'][e_bar])
+    if MARKETS:
+        book = P['swap_l'] if side == 1 else P['swap_s']
+        swap = book[x] - book[e_bar]
+    else:
+        swap = side * (P['interest'][x] - P['interest'][e_bar]) - (P['markup'][x] - P['markup'][e_bar])
     # "Before costs" puts back the spread this trade paid (at entry for a buy, at exit for a sell).
-    return (pnl + swap - P['cost']) / risk, (pnl + swap + (sp[e_bar] if side == 1 else sp[x])) / risk, x
+    return (pnl + swap - P['cost']) / risk, (pnl + swap + (sp_in[e_bar] if side == 1 else sp[x])) / risk, x
 
 
 def run(pair, df, rates):
@@ -240,7 +329,8 @@ def report(book):
             seg = b[(b['day'].dt.year >= a0) & (b['day'].dt.year <= b0)]
             per.append((f'{a0}-{b0}', seg['net'].mean() if len(seg) >= 30 else np.nan, len(seg)))
         up = sum(1 for _, m, _ in per if m > 0)
-        ok = sharpe >= BAR_SHARPE and t >= BAR_T and up >= 3
+        sells = b[b['side'] == -1]['net'].mean()
+        ok = (t >= BAR_T_MARKETS and up >= 3 and sells >= 0) if MARKETS else (sharpe >= BAR_SHARPE and t >= BAR_T and up >= 3)
         if ok:
             reached.append(name)
         print(f'\n{pattern}. {name}: {len(b)} trades ({len(b) / len(days):.2f} a day) · wins {np.mean(b["net"] > 0) * 100:.0f}%')
@@ -250,14 +340,24 @@ def report(book):
               f' · buys {b[b["side"] == 1]["net"].mean():+.3f}R, sells {b[b["side"] == -1]["net"].mean():+.3f}R')
         best = b.groupby('pair')['net'].agg(['mean', 'count'])
         print('   per pair: ' + ' · '.join(f'{p} {r["mean"]:+.2f}' for p, r in best.iterrows() if r['count'] >= 30))
-        print(f'   THE BAR: {"REACHED" if ok else "not reached"} (Sharpe {sharpe:+.2f}, t {t:+.2f}, positive in {up} of {len(PERIODS)} periods)')
+        print(f'   THE BAR: {"REACHED" if ok else "not reached"} (Sharpe {sharpe:+.2f}, t {t:+.2f}, positive in {up} of {len(PERIODS)} periods'
+              + (f', sells {sells:+.3f}R; needed: t {BAR_T_MARKETS:g}, three periods, sells not negative)' if MARKETS else ')'))
     print('\nPatterns that reach the bar: ' + (', '.join(reached) if reached else 'none'))
 
 
-def main(hourly_folder, rates_folder):
+def main(hourly_folder, rates_folder=None):
     data = load_hourly(hourly_folder)
     until = max(df.index[-1] for df in data.values())
-    rates, _ = load_rates(rates_folder, until)
+    if MARKETS:
+        rates = {}
+        known = {s: d for s, d in data.items() if s in GROUP and s in (SPREAD_PROFILE or {})}
+        data = {s: d for s, d in known.items() if (d.index[-1] - d.index[0]).days >= MIN_YEARS * 365.25}
+        if len(data) < len(known):
+            print(f'left out, fewer than {MIN_YEARS:g} years of bars: ' + ', '.join(s for s in known if s not in data))
+        if SPREAD_MULT != 1:
+            print(f'STRESS TEST: spreads and slippage x{SPREAD_MULT:g}')
+    else:
+        rates, _ = load_rates(rates_folder, until)
     rows = []
     for pair, df in data.items():
         rows += run(pair, df, rates)
