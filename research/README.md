@@ -13,6 +13,7 @@ They run in their own container next to the bot (`run.sh`, one CPU), not inside 
 | `carry_daily.py` | Does holding high-interest currencies against low-interest ones pay, after the broker's mark-up on overnight financing? |
 | `fx_styles.py` | Do value (purchasing power) and dollar carry improve on carry, alone or together? With the bar the combination had to clear. |
 | `clock_effects.py` | Two effects that follow the clock: the night a broker books three days of interest at once, and moves that recur at the same hours of the day. |
+| `patterns.py` | Seven chart patterns as fixed rules: false breakouts, bounces at levels, range breakouts, a trend pullback. |
 | `mt5/NeonfxExport.mq5` + `icm_import.py` | Export a broker's own history from MetaTrader 5 (bars, real spreads from ticks, swap rates) and check it before use. |
 
 ## Findings (26 November 2026, Yahoo Finance history, 16 pairs)
@@ -195,6 +196,50 @@ hours over the four years before, traded every day of the next year if larger th
 **Reading it.** The same picture as with the learning model: there are real, repeatable
 effects in these markets, and they are worth about one pip a trade, which is what a trade
 costs. Commission alone is 0.5 to 1.3 pips. Neither test reaches the bar.
+
+## Chart patterns as fixed rules (`patterns.py`, 27 November 2026)
+
+The project's owner named four patterns from his own trading. Each was written as a fixed rule
+(seven in all), committed before the first run, and traded on every occurrence in 16 years:
+130,000 trades, each risking 1R for a target of 2R, with real costs.
+
+| Pattern | Trades | Before costs | After costs |
+| --- | --- | --- | --- |
+| 1. False breakout of yesterday's high / low | 16,124 | −0.02R | −0.13R |
+| 2. False breakout of the night range | 25,108 | −0.01R | −0.12R |
+| 3. Bounce at yesterday's high / low | 2,018 | −0.02R | −0.10R |
+| 4. Bounce at a round number | 10,643 | −0.02R | −0.09R |
+| 5. Breakout of the night range | 28,523 | **+0.02R** (t = +2.9) | −0.05R |
+| 6. Breakout of yesterday's high / low | 25,290 | +0.00R | −0.06R |
+| 7. Trend with a pullback to the 50-bar average | 22,233 | −0.03R | −0.17R |
+
+None is positive after costs in any of the four periods. Taken on every occurrence, these
+set-ups are a coin flip before costs; only the break of the night range carries on a little
+more often than not. A trade costs 0.07 to 0.14R here, so a rule needs about +0.1R before costs
+just to break even.
+
+## Stacking the small effects (`stack_icm.sh`, 27 November 2026)
+
+The learning model with the clock effects as extra input (each pair's own habit at each hour),
+trading within one broker day: in, hold a fixed number of hours, out; no stop, no target, nothing
+open around the rollover. The rule for choosing was committed first: the setting with the
+highest per-day t-value on the unseen years up to 2021 is the one candidate, to be judged on the
+years after.
+
+| The candidate: hold 8 hours, most confident 1% | Trades | Per trade, after costs | Sharpe | Per-day t |
+| --- | --- | --- | --- | --- |
+| Unseen years up to 2021 (chosen here) | 766 | +0.11R, +3.6 pips | +0.72 | +1.85 |
+| **Unseen years after 2021 (judged here)** | 848 | **+0.09R, +3.8 pips** | **+0.62** | **+1.39** |
+| All unseen years, 2015-2026 | 1,614 | +0.10R (random entries: −0.05R) | | +2.26 |
+
+**The bar (Sharpe 0.5 and t 2 on the years after 2021) is not reached**: the Sharpe ratio
+passes, the t-value does not. In fairness to the result, that bar asked for more than five years
+can give: at a Sharpe ratio of 0.6 a t-value of 2 takes eleven years. What can be said: the
+result has the same size in both blocks, 10 of 12 yearly periods are up, it is spread over
+thirteen entry hours and ten pairs, and every possible 8-hour trade taken without the model
+loses 0.05 to 0.08R on either side, so the test itself favours nothing. It is the first
+result here that is positive after costs on years the model never saw, and it is not yet proof.
+Follow-ups under way: the same runs without the clock features, and with doubled spreads.
 
 ## Three traps this folder already fell into
 
