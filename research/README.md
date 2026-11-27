@@ -11,6 +11,7 @@ They run in their own container next to the bot (`run.sh`, one CPU), not inside 
 | `ml_daily.py` | The learning model on 20 years of daily closes: 2009-2026 all unseen. |
 | `ml_lab.py` | One bench for the learning model on hourly, 4-hour and daily bars: trades its most confident 10 / 5 / 2 / 1% of situations, next to random entries, with a breakdown of where the result comes from. |
 | `carry_daily.py` | Does holding high-interest currencies against low-interest ones pay, after the broker's mark-up on overnight financing? |
+| `fx_styles.py` | Do value (purchasing power) and dollar carry improve on carry, alone or together? With the bar the combination had to clear. |
 | `mt5/NeonfxExport.mq5` + `icm_import.py` | Export a broker's own history from MetaTrader 5 (bars, real spreads from ticks, swap rates) and check it before use. |
 
 ## Findings (26 November 2026, Yahoo Finance history, 16 pairs)
@@ -128,6 +129,32 @@ worst drop −21 to −28%), so it does not hang on the 21 days chosen in advanc
 loss for half a point of return a year. It makes carry easier to live with, not more
 profitable: still about +2.4% a year after the broker's cut.
 
+### Can other documented styles improve it? (`fx_styles.py`)
+
+Two more styles with published evidence, a candidate for the bot and the bar it had to clear,
+all committed before the first run: **value** (buy the two currencies whose real value in
+dollars fell most against their own level of five years ago, sell the two that rose most;
+consumer prices from the BIS, used three months late), **dollar carry** (all other currencies
+against the dollar, bought while their average rate is above the US rate) and the candidate:
+the three in equal parts with the volatility filter. The bar: a Sharpe ratio of at least 0.5
+after trading costs and the broker's mark-up, on both data sets.
+
+| After all costs | IC Markets closes, 2003-2026 | Both data sets, 2009-2026 |
+| --- | --- | --- |
+| Carry | +3.2%/yr, Sharpe 0.28 | Sharpe 0.44-0.46 |
+| Value | −1.3%/yr, Sharpe −0.14 | Sharpe 0.06-0.12 |
+| Dollar carry | −0.3%/yr, Sharpe −0.03 | Sharpe 0.03-0.05 |
+| Carry + value, half each | +1.5%/yr at 5.8% vol, Sharpe 0.26 | Sharpe 0.49-0.51 |
+| All three, a third each | +1.0%/yr at 4.9% vol, Sharpe 0.21 | Sharpe 0.46-0.47 |
+| **The candidate** (all three + filter) | +0.4%/yr at 3.0% vol, Sharpe 0.14, worst drop −12% | Yahoo: +2.0%/yr at 4.7% vol, Sharpe 0.42 |
+
+**The bar is not reached** on either data set (0.14 and 0.42). Value and dollar carry earn
+nothing here on their own; mixed with carry they lower the risk and the return alike, so the
+Sharpe ratio stays where carry already was. The Yahoo run looks better only because its history
+starts after the 2008 crash: over the same years (from 2009) the two sources agree to within
+0.05 on every line. Carry on its own remains the one positive result, at about a savings
+account's return. It is not built into the bot.
+
 ## Three traps this folder already fell into
 
 1. **Asking the data source for "all" daily history returns monthly bars.** The first trend
@@ -171,4 +198,5 @@ docker run --rm -v /opt/neonfx-research:/work -w /work neonfx-research python ic
 ./variants_icm.sh                         # the pre-registered tests
 ./check_icm.sh; ./check2_icm.sh           # where the hourly result comes from; away from the rollover
 docker run --rm -v /opt/neonfx-research:/work -w /work neonfx-research python carry_daily.py icm/daily rates icm_raw/meta.csv
+docker run --rm -v /opt/neonfx-research:/work -w /work neonfx-research python fx_styles.py icm/daily rates icm_raw/meta.csv
 ```
