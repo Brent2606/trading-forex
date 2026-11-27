@@ -9,6 +9,8 @@
 # swings to zero or below with another seed or a neighbouring holding time, it was luck.
 cd /opt/neonfx-research
 while [ ! -f stack2_icm.done ]; do sleep 20; done
+# The bench with the SEED setting goes in place only now, so the run before this one is not disturbed.
+if [ -f next/ml_lab.py ]; then for f in ml_lab.py run.sh; do cp -p next/$f .$f.tmp && mv -f .$f.tmp $f; done; chmod +x run.sh; fi
 export SPREADS=/work/icm/spreads.json CPU_SHARES=512
 v() { name=$1; shift; env "$@" LABEL="$name" ./run.sh "$name" ml_lab.py "icm/hourly icm/daily"; }
 SET="TF=H1 EXIT=time CLOCK=1 SKIP_HOURS=23,0,1 SL_ATR=1.5 TP_ATR=1.5 HTF=0 SPLIT_YEAR=2021 STEP_MONTHS=12 MIN_TRAIN_MONTHS=48 TRAIN_MONTHS=48"
