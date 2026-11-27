@@ -35,6 +35,7 @@ Settings come from the environment:
   the average of all entries in the same market, hour and side that year (what is left after that
   is direction; a model can also beat random entries merely by picking the cheap hours)
   BOOKS=folder writes every trade of the run to <folder>/<LABEL>.csv (markets_verdict.py reads them)
+  MATCHED=1 prints that same-market-hour-and-side yardstick for currency pairs too
 
 Usage: python ml_lab.py <hourly csv folder> <daily csv folder>
 """
@@ -78,12 +79,13 @@ SPLIT_YEAR = int(os.environ.get('SPLIT_YEAR', 0))
 MARKETS = os.environ.get('MARKETS', '0') == '1'
 MIN_YEARS = float(os.environ.get('MIN_YEARS', 6))
 BOOKS = os.environ.get('BOOKS', '')
+MATCHED = MARKETS or os.environ.get('MATCHED', '0') == '1'
 # Train on the last TRAIN_MONTHS only (0 = on everything before the test period).
 TRAIN_MONTHS = int(os.environ.get('TRAIN_MONTHS', 0))
 MAJORS = ['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD']
 QUANTILES = [0.90, 0.95, 0.98, 0.99]
 BOOK = ['pair', 'hour', 'side', 'r', 'day', 'pips']
-if MARKETS:
+if MATCHED:
     BOOK = BOOK + ['matched']   # the average result of every entry in the same market, hour and side that year
 # Real daily bars (the broker's own, DAILY_OHLC=1) or, from the free source, daily closes only.
 DAILY_OHLC = os.environ.get('DAILY_OHLC', '0') == '1'
@@ -507,6 +509,7 @@ def main(hourly_folder, daily_folder):
                 extra = [()] * len(mine)
                 if MARKETS:
                     same[q] += random_trades(rng_same, *args, len(mine), sides=[t[2] for t in mine])
+                if MATCHED:
                     cell = {}
                     for _, k, side in mine:
                         if (hrs[k], side) not in cell:
@@ -526,7 +529,7 @@ def main(hourly_folder, daily_folder):
         per_day = pd.DataFrame(book[q], columns=BOOK).groupby('day')['r'].sum()
         by_day = f' · per day t={per_day.mean() / (per_day.std(ddof=1) / np.sqrt(len(per_day))):+.2f}' if len(per_day) > 2 else ''
         print(line(f'top {100 - q * 100:.0f}%', allr, days, rnd[q], same[q] if MARKETS else None) + by_day + f' · periods up {pos}/{len(traded)} · 10,000 at 1% risk: {np.sum(allr) * 100:+,.0f}')
-        if MARKETS and len(book[q]) > 2:
+        if MATCHED and len(book[q]) > 2:
             b = pd.DataFrame(book[q], columns=BOOK)
             dlt = b['r'] - b['matched']
             print(f'           against all entries in the same market, hour and side that year ({b["matched"].mean():+.3f}R): {dlt.mean():+.3f}R (t={dlt.mean() / (dlt.std(ddof=1) / np.sqrt(len(dlt))):+.2f})')
