@@ -35,7 +35,7 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
-from common import COMMISSION_PIPS, PAIRS, SLIP_PIPS, SPREAD_PROFILE, atr, cost_pips, load_daily, load_hourly, pip
+from common import COMMISSION_PIPS, PAIRS, SLIP_PIPS, SPREAD_PROFILE, atr, cost_pips, load_daily, load_hourly, pip, server_hours
 
 TF = os.environ.get('TF', 'H1')
 SL_ATR = float(os.environ.get('SL_ATR', 1.5))
@@ -174,11 +174,6 @@ def features(sym, df, strength):
             f[f'lt_ema_slope_{days}d'] = (e - e.shift(max(1, n // 10))) / a
         f['lt_vol_regime'] = a / atr(df, 14 * max(d, 5)).rolling(20 * d).mean()
     return f, a
-
-
-def server_hours(index):
-    """Hour on the broker's clock (New York + 7 h) for each bar."""
-    return (index.tz_convert('America/New_York').tz_localize(None) + pd.Timedelta(hours=7)).hour.to_numpy()
 
 
 def spread_arrays(sym, df):

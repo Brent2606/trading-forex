@@ -30,6 +30,11 @@ if os.environ.get('SPREADS'):
         SPREAD_PROFILE = json.load(_f)
 
 
+def server_hours(index):
+    """Hour on the broker's clock (New York + 7 h) for each bar."""
+    return (index.tz_convert('America/New_York').tz_localize(None) + pd.Timedelta(hours=7)).hour.to_numpy()
+
+
 def cost_pips(sym):
     """Round-trip cost of one trade in pips: spread + commission + slippage."""
     prof = (SPREAD_PROFILE or {}).get(sym)
