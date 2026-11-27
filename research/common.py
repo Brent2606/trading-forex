@@ -23,9 +23,17 @@ def pip(sym):
     return 0.01 if sym.endswith('JPY') else 0.0001
 
 
+# Measured spreads (icm_import.py writes spreads.json): set SPREADS=/path/spreads.json to use them.
+SPREAD_PROFILE = None
+if os.environ.get('SPREADS'):
+    with open(os.environ['SPREADS']) as _f:
+        SPREAD_PROFILE = json.load(_f)
+
+
 def cost_pips(sym):
     """Round-trip cost of one trade in pips: spread + commission + slippage."""
-    return SPREAD[sym] + COMMISSION_PIPS + SLIP_PIPS
+    prof = (SPREAD_PROFILE or {}).get(sym)
+    return (prof['tick_weighted'] if prof else SPREAD[sym]) + COMMISSION_PIPS + SLIP_PIPS
 
 
 def load_hourly(folder):
@@ -79,16 +87,20 @@ def fetch_daily(folder, pairs=PAIRS, first_year=2003):
 
 
 def load_daily(folder):
-    """Daily bars. USE THE CLOSE COLUMN ONLY: since about 2011 the source's daily "close" is the
-    price at the start of the day and its high / low cover the day after, so open / high / low
-    are not a normal bar and leak the future into anything built on them. (Hourly bars are fine.)"""
+    """Daily rows. USE THE CLOSE COLUMN ONLY: since about 2011 the source's daily "close" is the
+    price at the start of the day, and its high / low cover only part of the day after it. Open /
+    high / low are not a normal bar: anything built on them either sees the future or misses
+    part of the day. (Hourly bars are fine.)"""
     out = {}
     for sym in PAIRS:
         path = os.path.join(folder, f'{sym}_D1.csv')
         if not os.path.exists(path):
             continue
         df = pd.read_csv(path)
-        df['time'] = pd.to_datetime(df['time'], unit='s', utc=True).dt.normalize()
+        # Rows are stamped at midnight London time: 00:00 UTC in winter, 23:00 UTC the evening before
+        # in summer (so Monday's row is stamped Sunday 23:00). Two hours later is the same calendar
+        # day all year round.
+        df['time'] = (pd.to_datetime(df['time'], unit='s', utc=True) + pd.Timedelta(hours=2)).dt.normalize()
         df = df.drop_duplicates('time', keep='last').set_index('time').sort_index()
         df = df[df.index.dayofweek < 5]
         # Yahoo's early FX data has occasional bad prints: drop daily moves above 15%.
