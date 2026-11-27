@@ -151,15 +151,16 @@ def run(closes, rates, k, markup, shuffle=None):
     return evaluate(p, markup) + (p['w'][p['valid']], p['rate'][p['valid']])
 
 
-def crash_filters(base, spot):
+def crash_filters(base, spot, window=21):
     """The three filters described at the top: per day the size to hold, between 0 and 1.
-    `base` is the unfiltered basket's daily result before costs."""
+    `base` is the unfiltered basket's daily result before costs. `window` is filter 1's look-back
+    (21 days is the rule that was fixed in advance; other values only show how much hangs on it)."""
     weekly = pd.Series(np.arange(len(base)) % 5 == 0, index=base.index)
 
     def hold(signal):   # looked at once a week on the close, acted on from the next day
         return signal.where(weekly).ffill().shift(1).fillna(1.0)
 
-    rough = base.rolling(21).std() * np.sqrt(252)
+    rough = base.rolling(window).std() * np.sqrt(252)
     typical = rough.expanding(min_periods=504).median()
     moves = spot.drop(columns='USD').abs().mean(axis=1).reindex(base.index).rolling(21).mean()
     top_quarter = moves.expanding(min_periods=504).quantile(0.75)
@@ -196,6 +197,11 @@ def report_filters(p, markup, base_gross, base_net):
               f' · extra trading costs {(gross - traded).mean() * 252 * 100:.2f}%/yr')
         print(f'    against the unfiltered basket at {size.mean() * 100:.0f}% size all the time: {extra.mean() * 252 * 100:+.2f}%/yr (t={t:+.2f}), '
               f'worst drop {worst(net):.0f}% against {worst(size.mean() * base_net):.0f}%')
+    # Not a search for the best setting: does filter 1 depend on the 21 days that were fixed in advance?
+    print('filter 1 with another look-back (Sharpe, worst drop, 2008): ' + ' · '.join(
+        f'{n} days {sharpe(r):+.2f}, {worst(r):.0f}%, {year(r, 2008):+.0f}%'
+        for n in (10, 21, 42, 63)
+        for r in [evaluate(p, markup, crash_filters(base_gross, p['spot'], n)['1. smaller when the basket gets rough'])[2]]))
 
 
 def main(daily_folder, rates_folder, meta_path=None):

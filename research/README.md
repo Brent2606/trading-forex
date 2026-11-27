@@ -105,6 +105,29 @@ markets panic. After the broker's cut it earns about what a savings account pays
 −45% year in the history. For the euro the rate series is the main refinancing rate, which
 overstates euro interest by about half a point in 2014-2022.
 
+### Can a crash filter make carry safer?
+
+Three well-known ways of stepping aside, written down (and committed) before they were run,
+each using only what was known the day before and looked at once a week. Figures are after
+trading costs and the broker's mark-up, for the main basket.
+
+| | IC Markets closes | Yahoo closes |
+| --- | --- | --- |
+| No filter | +3.1%/yr, Sharpe 0.27, worst drop −45%, 2008: −32% | +2.8%/yr, Sharpe 0.24, worst drop −45%, 2008: −32% |
+| 1. Smaller when the basket gets rough (size = typical / current 21-day volatility, at most 1) | +2.5%/yr, Sharpe 0.31, worst drop −26%, 2008: −18% | +2.3%/yr, Sharpe 0.29, worst drop −22%, 2008: −14% |
+| 2. Out when currencies are restless (top quarter of 21-day FX volatility so far) | +2.1%/yr, Sharpe 0.26, worst drop −36%, 2008: −19% | +1.8%/yr, Sharpe 0.22, worst drop −30%, 2008: −16% |
+| 3. Out after three losing months | +1.9%/yr, Sharpe 0.24, worst drop −34%, 2008: −8% | +1.8%/yr, Sharpe 0.23, worst drop −27%, 2008: −5% |
+
+Against the unfiltered basket held at the filter's own average size all the time, no filter
+adds return (−0.0 to −0.6%/yr, every |t| below 0.5). What filter 1 does add is a smoother
+ride: at 87-89% average size its worst drop is −22 to −26%, where a constant position of that
+size would have dropped −40%. That holds for look-backs of 10 to 63 days (Sharpe 0.27-0.33,
+worst drop −21 to −28%), so it does not hang on the 21 days chosen in advance.
+
+**Reading it.** Shrinking the position when the basket turns rough about halves the worst
+loss for half a point of return a year. It makes carry easier to live with, not more
+profitable: still about +2.4% a year after the broker's cut.
+
 ## Three traps this folder already fell into
 
 1. **Asking the data source for "all" daily history returns monthly bars.** The first trend
