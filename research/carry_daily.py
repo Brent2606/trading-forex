@@ -11,6 +11,20 @@ Everything is fixed in advance: currencies are ranked once a month on the centra
 the end of the month before; the top K are bought and the bottom K sold in equal parts, against the US dollar.
 Nothing is tuned to the data, so the whole history is an honest test.
 
+Crash filters (added 27 November 2026, rules written down before the first run). Carry loses
+most when markets panic, so three well-known ways of stepping aside are tested on the main
+basket, each using only what was known the day before and each looked at once a week:
+  1. smaller when the basket gets rough: size = typical roughness / current roughness, never
+     above 1. Roughness is the volatility of the unfiltered basket over the past 21 trading
+     days; typical is the median of that number over all history so far (at least two years).
+  2. out when currencies are restless: no position while the average daily move of all
+     currencies against the dollar over the past 21 days is in the top quarter of its own
+     history so far.
+  3. out after three losing months: no position while the unfiltered basket's result over the
+     past 63 trading days is negative.
+A filter earns its place only if it does better than simply holding a smaller position all the
+time, so each is compared with the unfiltered basket at the filter's own average size.
+
 Usage: python carry_daily.py <daily csv folder> <rates folder> [<MetaTrader meta.csv>]
 """
 import os
@@ -85,10 +99,9 @@ def broker_markup(meta_path, closes):
     return (float(np.median(cuts)) if cuts else DEFAULT_MARKUP), rows
 
 
-def run(closes, rates, k, markup, shuffle=None):
-    """Daily returns of the carry portfolio: before costs, after trading costs, and after the
-    broker's financing mark-up in the cheapest (netted through crosses) and the plain (every
-    currency against the dollar) way of holding it."""
+def build(closes, rates, k, shuffle=None):
+    """The carry basket: per day the weight of each currency (top K bought, bottom K sold, decided
+    once a month), with everything needed to work out its result."""
     ccys = [c for c in rates.columns if c == 'USD' or USD_PAIR[c] in closes]
     px = pd.DataFrame({c: closes[USD_PAIR[c]] for c in ccys if c != 'USD'}).sort_index().ffill(limit=3)
     # Value of each currency in dollars.
@@ -112,17 +125,77 @@ def run(closes, rates, k, markup, shuffle=None):
         row[order.index[:k]] = -1 / k
         w.loc[t] = row
     w = w.ffill().shift(1)   # decided on the month's first close, held from the next day
-    days = pd.Series(usd.index, index=usd.index).diff().dt.days.fillna(1).clip(upper=5)
-    interest = (w * rate).sum(axis=1) * days / 365
-    gross = (w * spot).sum(axis=1) + interest
-    cost_frac = pd.Series({c: cost_pips(USD_PAIR[c]) * pip(USD_PAIR[c]) for c in px}) / px
-    trading = (w[px.columns].diff().abs() * cost_frac / 2).sum(axis=1)
-    held_usd = w[px.columns].abs().sum(axis=1)                       # every currency against the dollar
+    return {
+        'w': w, 'spot': spot, 'rate': rate, 'pairs': list(px.columns), 'valid': w.notna().all(axis=1),
+        'days': pd.Series(usd.index, index=usd.index).diff().dt.days.fillna(1).clip(upper=5),
+        'cost_frac': pd.Series({c: cost_pips(USD_PAIR[c]) * pip(USD_PAIR[c]) for c in px}) / px,
+    }
+
+
+def evaluate(p, markup, exposure=None):
+    """Daily returns of the basket: before costs, after trading costs, and after the broker's
+    financing mark-up in the cheapest (netted through crosses) and the plain (every currency
+    against the dollar) way of holding it. `exposure` (0..1 per day) is a crash filter's size."""
+    w = p['w'] if exposure is None else p['w'].mul(exposure.reindex(p['w'].index).fillna(1.0), axis=0)
+    days, v = p['days'], p['valid']
+    gross = (w * p['spot']).sum(axis=1) + (w * p['rate']).sum(axis=1) * days / 365
+    after_trading = gross - (w[p['pairs']].diff().abs() * p['cost_frac'] / 2).sum(axis=1)
+    held_usd = w[p['pairs']].abs().sum(axis=1)                       # every currency against the dollar
     held_net = np.maximum(w.clip(lower=0).sum(axis=1), -w.clip(upper=0).sum(axis=1))   # paired into crosses
-    valid = w.notna().all(axis=1)
-    after_trading = gross - trading
-    return (gross[valid], after_trading[valid], (after_trading - held_net * markup * days / 365)[valid],
-            (after_trading - held_usd * markup * days / 365)[valid], w[valid], rate[valid])
+    return (gross[v], after_trading[v], (after_trading - held_net * markup * days / 365)[v],
+            (after_trading - held_usd * markup * days / 365)[v])
+
+
+def run(closes, rates, k, markup, shuffle=None):
+    p = build(closes, rates, k, shuffle)
+    return evaluate(p, markup) + (p['w'][p['valid']], p['rate'][p['valid']])
+
+
+def crash_filters(base, spot):
+    """The three filters described at the top: per day the size to hold, between 0 and 1.
+    `base` is the unfiltered basket's daily result before costs."""
+    weekly = pd.Series(np.arange(len(base)) % 5 == 0, index=base.index)
+
+    def hold(signal):   # looked at once a week on the close, acted on from the next day
+        return signal.where(weekly).ffill().shift(1).fillna(1.0)
+
+    rough = base.rolling(21).std() * np.sqrt(252)
+    typical = rough.expanding(min_periods=504).median()
+    moves = spot.drop(columns='USD').abs().mean(axis=1).reindex(base.index).rolling(21).mean()
+    top_quarter = moves.expanding(min_periods=504).quantile(0.75)
+    three_months = base.rolling(63).sum()
+    return {
+        '1. smaller when the basket gets rough': hold((typical / rough).clip(upper=1.0)),
+        '2. out when currencies are restless': hold((moves <= top_quarter).astype(float).where(top_quarter.notna())),
+        '3. out after three losing months': hold((three_months >= 0).astype(float).where(three_months.notna())),
+    }
+
+
+def sharpe(r):
+    return r.mean() * 252 / (r.std() * np.sqrt(252)) if r.std() > 0 else 0.0
+
+
+def report_filters(p, markup, base_gross, base_net):
+    """Each filter against no filter, and against the unfiltered basket held at the filter's
+    average size all the time (the fair yardstick: a filter must beat simply betting less)."""
+    year = lambda r, y: ((1 + r[r.index.year == y]).prod() - 1) * 100
+    worst = lambda r: ((1 + r).cumprod() / (1 + r).cumprod().cummax() - 1).min() * 100
+    periods = [(1998, 2008), (2009, 2015), (2016, 2021), (2022, 2026)]
+    by_period = lambda r: ' / '.join(f'{sharpe(r[(r.index.year >= a) & (r.index.year <= b)]):+.2f}' for a, b in periods
+                                     if ((r.index.year >= a) & (r.index.year <= b)).sum() > 200)
+    print('\n=== CRASH FILTERS ON THE MAIN TEST · after trading costs and the mark-up (paired into crosses)')
+    print(stats('no filter', base_net) + f' · 2008: {year(base_net, 2008):+.0f}%')
+    print(f'    Sharpe per period: {by_period(base_net)}')
+    for name, e in crash_filters(base_gross, p['spot']).items():
+        gross, traded, net, _ = evaluate(p, markup, e)
+        size = e.reindex(net.index).fillna(1.0)
+        extra = net - size.mean() * base_net
+        t = extra.mean() / (extra.std(ddof=1) / np.sqrt(len(extra)))
+        print(stats(name, net) + f' · 2008: {year(net, 2008):+.0f}%')
+        print(f'    Sharpe per period: {by_period(net)} · average size {size.mean() * 100:.0f}%, fully out {np.mean(size < 0.01) * 100:.0f}% of the days'
+              f' · extra trading costs {(gross - traded).mean() * 252 * 100:.2f}%/yr')
+        print(f'    against the unfiltered basket at {size.mean() * 100:.0f}% size all the time: {extra.mean() * 252 * 100:+.2f}%/yr (t={t:+.2f}), '
+              f'worst drop {worst(net):.0f}% against {worst(size.mean() * base_net):.0f}%')
 
 
 def main(daily_folder, rates_folder, meta_path=None):
@@ -145,7 +218,9 @@ def main(daily_folder, rates_folder, meta_path=None):
             print(f'  {pair}: {lo:+.2f} / {sh:+.2f}')
 
     for k, name in ((2, 'TOP 2 AGAINST BOTTOM 2 (the main test)'), (3, 'TOP 3 AGAINST BOTTOM 3'), (1, 'HIGHEST AGAINST LOWEST')):
-        gross, traded, net_best, net_plain, w, rate = run(closes, rates, k, markup)
+        p = build(closes, rates, k)
+        gross, traded, net_best, net_plain = evaluate(p, markup)
+        w, rate = p['w'][p['valid']], p['rate'][p['valid']]
         ccys = list(w.columns)
         print(f'\n=== {name} · {len(ccys)} currencies ({" ".join(ccys)}), monthly')
         print(stats('before any costs', gross))
@@ -168,6 +243,7 @@ def main(daily_folder, rates_folder, meta_path=None):
             fake = [run(closes, rates, k, markup, shuffle=rng)[0].mean() * 252 * 100 for _ in range(40)]
             print(f'check, 40 random rankings instead of interest rates, before costs: {np.mean(fake):+.1f}%/yr on average '
                   f'(from {np.min(fake):+.1f} to {np.max(fake):+.1f}); the real ranking: {gross.mean() * 252 * 100:+.1f}%/yr')
+            report_filters(p, markup, gross, net_best)
 
 
 if __name__ == '__main__':
