@@ -90,14 +90,17 @@
             <option value="stoch">Stoch</option>
             <option value="none">No pane</option>
           </select>
-          <div class="seg">
+          <span class="ph-note" id="chart-note"></span>
+        </div>
+        <div class="chart-wrap" id="chart-wrap">
+          <canvas id="chart" aria-label="Price chart" title="Drag to pan · wheel to zoom · double-click to return to live"></canvas>
+          <!-- Zoom and "back to now" float over the chart, so the toolbar above fits on one row. -->
+          <div class="seg chart-zoom">
             <button type="button" id="zoom-out" title="Zoom out" aria-label="Zoom out">−</button>
             <button type="button" id="zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
             <button type="button" id="go-live" title="Jump to the latest bar" aria-label="Jump to the latest bar">LIVE</button>
           </div>
-          <span class="ph-note" id="chart-note"></span>
         </div>
-        <div class="chart-wrap" id="chart-wrap"><canvas id="chart" aria-label="Price chart" title="Drag to pan · wheel to zoom · double-click to return to live"></canvas></div>
       </section>
 
       <!-- ============================== RIGHT RAIL ============================== -->

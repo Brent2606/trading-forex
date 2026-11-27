@@ -96,7 +96,7 @@ const shiftAt = (a: Float64Array, i: number): Float64Array => {
 const AXIS_W = 76;
 const AXIS_H = 22;
 const TOP = 6;
-const MARGIN_BARS = 4;
+const MARGIN_BARS = 6;
 
 function niceStep(range: number, target: number): number {
   const raw = range / Math.max(1, target);
@@ -114,7 +114,7 @@ function readTheme(): Theme {
     text: v('--text', '#ece9ff'),
     dim: v('--dim', '#8f88bf'),
     faint: v('--faint', '#5d5788'),
-    grid: 'rgba(58, 50, 112, 0.35)',
+    grid: 'rgba(58, 50, 112, 0.28)',
     line: v('--line-2', '#3a3270'),
     up: v('--up', '#00f0b5'),
     down: v('--down', '#ff2f7d'),
@@ -151,7 +151,7 @@ export class CandleChart {
   private tf: Timeframe = 'H1';
   private bid: number | null = null;
   private ask: number | null = null;
-  private barW = 8;
+  private barW = 10;
   private right = 0;
   private follow = true;
   private hover: { x: number; y: number } | null = null;
@@ -392,6 +392,12 @@ export class CandleChart {
     return p.toFixed(this.digits);
   }
 
+  /** Whether t starts a new day compared with prev (a new month on the daily chart). */
+  private newPeriod(t: number, prev: number): boolean {
+    if (this.tf === 'D1') return new Date(tradingDayDate(prev)).getUTCMonth() !== new Date(tradingDayDate(t)).getUTCMonth();
+    return new Date(prev).toDateString() !== new Date(t).toDateString();
+  }
+
   private timeLabel(t: number, prev: number | null): string {
     if (this.tf === 'D1') {
       const d = tradingDayDate(t);
@@ -424,8 +430,9 @@ export class CandleChart {
     if (this.follow) this.right = n - 1 + MARGIN_BARS;
 
     const plotW = w - AXIS_W;
-    const lowerH = this.low !== 'none' ? Math.max(56, Math.round((h - AXIS_H - TOP) * 0.24)) : 0;
-    const gap = lowerH ? 10 : 0;
+    const lowerH = this.low !== 'none' ? Math.max(48, Math.round((h - AXIS_H - TOP) * 0.2)) : 0;
+    const gap = lowerH ? 12 : 0;
+    ctx.lineJoin = 'round';
     const pTop = TOP;
     const pBot = h - AXIS_H - lowerH - gap;
     const lTop = pBot + gap;
@@ -471,18 +478,19 @@ export class CandleChart {
     }
     if (!Number.isFinite(hi) || !Number.isFinite(lo)) return;
     const span = hi - lo || hi * 0.001 || 1;
-    hi += span * 0.08;
+    hi += span * 0.14;
     lo -= span * 0.08;
     const y = (p: number) => pTop + ((hi - p) / (hi - lo)) * (pBot - pTop);
 
     // ---- grid + price axis
     ctx.lineWidth = 1;
-    const step = niceStep(hi - lo, (pBot - pTop) / 46);
+    const step = niceStep(hi - lo, (pBot - pTop) / 54);
     ctx.strokeStyle = th.grid;
-    ctx.fillStyle = th.faint;
+    ctx.fillStyle = th.dim;
     ctx.textAlign = 'left';
     for (let p = Math.ceil(lo / step) * step; p <= hi; p += step) {
       const yy = Math.round(y(p)) + 0.5;
+      if (yy < pTop + 8 || yy > pBot - 6) continue;
       ctx.beginPath();
       ctx.moveTo(0, yy);
       ctx.lineTo(plotW, yy);
@@ -501,13 +509,16 @@ export class CandleChart {
         prevT = this.bars[i].t;
         continue;
       }
-      ctx.strokeStyle = th.grid;
+      const label = this.timeLabel(this.bars[i].t, prevT);
+      // The first label of a new day (a new month on the daily chart) gets a stronger line.
+      const newDay = prevT !== null && this.newPeriod(this.bars[i].t, prevT);
+      ctx.strokeStyle = newDay ? withAlpha(th.line, 0.9) : withAlpha(th.line, 0.28);
       ctx.beginPath();
       ctx.moveTo(xx, pTop);
       ctx.lineTo(xx, lBot);
       ctx.stroke();
-      ctx.fillStyle = th.faint;
-      ctx.fillText(this.timeLabel(this.bars[i].t, prevT), xx, h - AXIS_H / 2);
+      ctx.fillStyle = newDay ? th.text : th.dim;
+      ctx.fillText(label, xx, h - AXIS_H / 2);
       prevT = this.bars[i].t;
     }
 
@@ -534,12 +545,13 @@ export class CandleChart {
       let vmax = 0;
       for (let i = from; i <= to; i++) vmax = Math.max(vmax, this.raw[i].v);
       if (vmax > 0) {
-        const vh = (pBot - pTop) * 0.16;
+        const vh = (pBot - pTop) * 0.12;
+        const vw = Math.max(1, Math.round(bw * 0.66));
         for (let i = from; i <= to; i++) {
           const b = this.raw[i];
-          const hh = (b.v / vmax) * vh;
-          ctx.fillStyle = withAlpha(b.c >= b.o ? th.up : th.down, 0.18);
-          ctx.fillRect(x(i) - bw * 0.36, pBot - hh, Math.max(1, bw * 0.72), hh);
+          const hh = Math.max(1, Math.round((b.v / vmax) * vh));
+          ctx.fillStyle = withAlpha(b.c >= b.o ? th.up : th.down, 0.14);
+          ctx.fillRect(Math.round(x(i) - vw / 2), pBot - hh, vw, hh);
         }
       }
     }
@@ -658,30 +670,26 @@ export class CandleChart {
           ctx.stroke();
           continue;
         }
+        ctx.strokeStyle = withAlpha(col, 0.8);
         ctx.beginPath();
         ctx.moveTo(cx, Math.round(y(b.h)));
         ctx.lineTo(cx, Math.round(y(b.l)));
         ctx.stroke();
-        const bodyW = Math.max(1, Math.round(bw * 0.7));
+        // An odd body width keeps the wick exactly in the middle.
+        let bodyW = Math.max(1, Math.round(bw * 0.66));
+        if (bodyW % 2 === 0) bodyW += 1;
         const yo = y(b.o);
         const yc = y(b.c);
         const top = Math.round(Math.min(yo, yc));
         const hgt = Math.max(1, Math.round(Math.abs(yc - yo)));
-        const left = Math.round(cx - bodyW / 2);
-        if (up) {
-          ctx.fillStyle = withAlpha(th.up, 0.22);
-          ctx.fillRect(left, top, bodyW, hgt);
-          ctx.strokeRect(left + 0.5, top + 0.5, Math.max(0, bodyW - 1), Math.max(0, hgt - 1));
-        } else {
-          ctx.fillRect(left, top, bodyW, hgt);
-        }
+        ctx.fillRect(Math.floor(cx - bodyW / 2), top, bodyW, hgt);
       }
       // glow on the forming bar
       if (this.glow && to === n - 1) {
         const b = this.bars[to];
         const cx = Math.round(x(to)) + 0.5;
         ctx.shadowColor = b.c >= b.o ? th.up : th.down;
-        ctx.shadowBlur = 14;
+        ctx.shadowBlur = 8;
         ctx.strokeStyle = ctx.shadowColor;
         ctx.beginPath();
         ctx.moveTo(cx, y(b.h));
@@ -692,9 +700,9 @@ export class CandleChart {
     }
 
     // ---- moving averages
-    if (this.ov.ema200) this.polyline(ind.ema200, from, to, x, y, th.accent, 1.4);
-    if (this.ov.ema50) this.polyline(ind.ema50, from, to, x, y, th.warn, 1.2);
-    if (this.ov.ema20) this.polyline(ind.ema20, from, to, x, y, th.cyan, 1.2);
+    if (this.ov.ema200) this.polyline(ind.ema200, from, to, x, y, th.accent, 1.5);
+    if (this.ov.ema50) this.polyline(ind.ema50, from, to, x, y, th.warn, 1.5);
+    if (this.ov.ema20) this.polyline(ind.ema20, from, to, x, y, th.cyan, 1.5);
 
     // ---- markers (backtest trades)
     if (zone && zoneVisible && zone.exit !== null) {
@@ -748,13 +756,14 @@ export class CandleChart {
     ctx.textAlign = 'left';
     let above = 0;
     let below = 0;
+    const placed: { x0: number; x1: number; y: number }[] = [];
     for (const ln of this.lines) {
       const yy = y(ln.price);
       if (yy < pTop || yy > pBot) {
         // Off-screen: stack small arrow tags on the price axis.
         const ey = yy < pTop ? pTop + 9 + 19 * above++ : pBot - 9 - 19 * below++;
         const short = tr(ln.label).split(' ').slice(0, 2).join(' ');
-        this.tag(plotW + 2, ey, (yy < pTop ? '▲' : '▼') + short, withAlpha(ln.color, 0.25), ln.color, AXIS_W - 4);
+        this.tag(plotW + 2, ey, (yy < pTop ? '▲' : '▼') + short, withAlpha(th.void, 0.9), th.text, AXIS_W - 4, false, ln.color);
         continue;
       }
       const yr = Math.round(yy) + 0.5;
@@ -766,10 +775,20 @@ export class CandleChart {
       ctx.lineTo(plotW, yr);
       ctx.stroke();
       ctx.setLineDash([]);
+      ctx.font = `11px ${MONO}`;
       const label = tr(ln.label);
-      const tw = ctx.measureText(label).width + 12;
-      // Keep labels clear of the OHLC legend in the top-left corner.
-      this.tag(yr < TOP + 44 ? plotW - tw - 8 : 6, yr, label, withAlpha(ln.color, 0.18), ln.color, tw);
+      const tw = ctx.measureText(label).width + 16;
+      // The name of the line: a dark chip with a coloured edge, the text in normal ink so it stays
+      // readable on top of candles. Kept clear of the legend in the top-left corner.
+      // Two lines at almost the same price: the second name moves beside the first instead of on top of it.
+      let lx = yr < TOP + 48 ? Math.max(6, plotW - tw - 8) : 6;
+      for (const r of placed) {
+        if (Math.abs(r.y - yr) < 19 && lx < r.x1 + 6 && lx + tw > r.x0 - 6) lx = r.x1 + 6;
+      }
+      if (lx + tw <= plotW - 4 || !placed.length) {
+        this.tag(lx, yr, label, withAlpha(th.void, 0.9), th.text, tw, false, ln.color);
+        placed.push({ x0: lx, x1: lx + tw, y: yr });
+      }
       this.tag(plotW + 2, yr, this.fmt(ln.price), ln.color, th.void, AXIS_W - 4);
     }
 
@@ -779,7 +798,7 @@ export class CandleChart {
       const col = last && last.c >= last.o ? th.up : th.down;
       const yb = Math.round(y(this.bid)) + 0.5;
       if (yb >= pTop && yb <= pBot) {
-        ctx.strokeStyle = col;
+        ctx.strokeStyle = withAlpha(col, 0.7);
         ctx.setLineDash([2, 3]);
         ctx.beginPath();
         ctx.moveTo(0, yb);
@@ -788,7 +807,7 @@ export class CandleChart {
         ctx.setLineDash([]);
         if (this.glow) {
           ctx.shadowColor = col;
-          ctx.shadowBlur = 12;
+          ctx.shadowBlur = 8;
         }
         this.tag(plotW + 2, yb, this.fmt(this.bid), col, th.void, AXIS_W - 4, true);
         ctx.shadowBlur = 0;
@@ -851,39 +870,78 @@ export class CandleChart {
     if (!b) return;
     const prev = this.raw[i - 1];
     const chg = prev ? ((b.c - prev.c) / prev.c) * 100 : 0;
-    ctx.textAlign = 'left';
-    let xx = 10;
-    const yy = TOP + 10;
-    const put = (s: string, col: string, bold = false) => {
-      ctx.font = `${bold ? '700 ' : ''}11px ${MONO}`;
-      ctx.fillStyle = col;
-      ctx.fillText(s, xx, yy);
-      xx += ctx.measureText(s).width + 8;
+    const maxW = this.w - AXIS_W - 12;
+    type Part = { s: string; col: string; bold?: boolean; swatch?: string; gap?: number };
+    // One row of the legend: a dark chip exactly as wide as its text, so it hides as little as possible.
+    const row = (parts: Part[], yy: number, size: number) => {
+      const font = (bold?: boolean) => `${bold ? '700 ' : ''}${size}px ${MONO}`;
+      let width = 0;
+      const widths = parts.map((p) => {
+        ctx.font = font(p.bold);
+        const wd = ctx.measureText(p.s).width + (p.swatch ? 14 : 0) + (p.gap ?? 9);
+        width += wd;
+        return wd;
+      });
+      if (!parts.length) return;
+      ctx.fillStyle = withAlpha(th.void, 0.78);
+      this.box(5, yy - 8, Math.min(maxW, width + 3), 16, 3);
+      ctx.fill();
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(5, yy - 8, maxW, 16);
+      ctx.clip();
+      let xx = 11;
+      parts.forEach((p, k) => {
+        if (p.swatch) {
+          ctx.fillStyle = p.swatch;
+          ctx.fillRect(xx, Math.round(yy) - 1, 9, 2);
+          xx += 14;
+        }
+        ctx.font = font(p.bold);
+        ctx.fillStyle = p.col;
+        ctx.textAlign = 'left';
+        ctx.fillText(p.s, xx, yy + 0.5);
+        xx += widths[k] - (p.swatch ? 14 : 0);
+      });
+      ctx.restore();
     };
-    ctx.fillStyle = withAlpha(th.void, 0.72);
-    ctx.fillRect(4, TOP + 1, Math.min(this.w - AXIS_W - 8, 640), 34);
-    put(`${this.title} · ${this.tf}`, th.text, true);
-    put(`O ${this.fmt(b.o)}`, th.dim);
-    put(`H ${this.fmt(b.h)}`, th.dim);
-    put(`L ${this.fmt(b.l)}`, th.dim);
-    put(`C ${this.fmt(b.c)}`, b.c >= b.o ? th.up : th.down, true);
-    put(`${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`, chg >= 0 ? th.up : th.down);
-    xx = 10;
-    const y2 = yy + 15;
-    const put2 = (s: string, col: string) => {
-      ctx.font = `10.5px ${MONO}`;
-      ctx.fillStyle = col;
-      ctx.fillText(s, xx, y2);
-      xx += ctx.measureText(s).width + 10;
-    };
+    const pair = (label: string, value: string, bold = false): Part[] => [
+      { s: label, col: th.dim, gap: 4 },
+      { s: value, col: th.text, bold },
+    ];
+    const dirCol = chg >= 0 ? th.up : th.down;
+    row(
+      [
+        { s: `${this.title} · ${this.tf}`, col: th.text, bold: true, gap: 12 },
+        ...pair('O', this.fmt(b.o)),
+        ...pair('H', this.fmt(b.h)),
+        ...pair('L', this.fmt(b.l)),
+        ...pair('C', this.fmt(b.c), true),
+        { s: `${chg >= 0 ? '▲ +' : '▼ '}${chg.toFixed(2)}%`, col: dirCol },
+      ],
+      TOP + 11,
+      11,
+    );
     const val = (a: Float64Array) => (Number.isNaN(a[i]) ? '—' : this.fmt(a[i]));
     const [m1, m2, m3] = this.maN;
-    if (this.ov.ema20) put2(`EMA${m1} ${val(ind.ema20)}`, th.cyan);
-    if (this.ov.ema50) put2(`EMA${m2} ${val(ind.ema50)}`, th.warn);
-    if (this.ov.ema200) put2(`EMA${m3} ${val(ind.ema200)}`, th.accent);
-    if (this.ov.bb) put2(`BB ${val(ind.bb.upper)} / ${val(ind.bb.lower)}`, th.accent);
-    if (ind.chHi && ind.chLo && i > 0) put2(`${tr('Channel')} ${val(shiftAt(ind.chHi, i))} / ${val(shiftAt(ind.chLo, i))}`, th.cyan);
-    if (this.type === 'heikin') put2(tr('Heikin-Ashi bodies · OHLC shows real prices'), th.faint);
+    const second: Part[] = [];
+    const line = (name: string, value: string, col: string) => second.push({ s: name, col: th.dim, swatch: col, gap: 5 }, { s: value, col: th.text, gap: 12 });
+    if (this.ov.ema20) line(`EMA${m1}`, val(ind.ema20), th.cyan);
+    if (this.ov.ema50) line(`EMA${m2}`, val(ind.ema50), th.warn);
+    if (this.ov.ema200) line(`EMA${m3}`, val(ind.ema200), th.accent);
+    if (this.ov.bb) line('BB', `${val(ind.bb.upper)} / ${val(ind.bb.lower)}`, th.accent);
+    if (ind.chHi && ind.chLo && i > 0) line(tr('Channel'), `${val(shiftAt(ind.chHi, i))} / ${val(shiftAt(ind.chLo, i))}`, th.cyan);
+    if (this.type === 'heikin') second.push({ s: tr('Heikin-Ashi bodies · OHLC shows real prices'), col: th.faint });
+    row(second, TOP + 29, 10.5);
+    ctx.font = `11px ${MONO}`;
+  }
+
+  /** A rounded rectangle path (plain corners where the browser has no roundRect). */
+  private box(xx: number, yy: number, width: number, height: number, r: number): void {
+    const ctx = this.ctx;
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') ctx.roundRect(xx, yy, width, height, r);
+    else ctx.rect(xx, yy, width, height);
   }
 
   private drawLower(
@@ -936,7 +994,7 @@ export class CandleChart {
       ctx.lineTo(plotW, yy);
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = th.faint;
+      ctx.fillStyle = th.dim;
       ctx.textAlign = 'left';
       ctx.font = `10px ${MONO}`;
       ctx.fillText(this.low === 'macd' ? v.toFixed(this.digits) : String(v), plotW + 8, yy);
@@ -946,12 +1004,12 @@ export class CandleChart {
       const upper = rs?.upper ?? 70;
       const lower = rs?.lower ?? 30;
       const yUp = y(upper);
-      ctx.fillStyle = withAlpha(th.accent, 0.08);
+      ctx.fillStyle = withAlpha(th.accent, 0.06);
       ctx.fillRect(0, yUp, plotW, y(lower) - yUp);
       hline(upper, withAlpha(th.down, rs ? 0.9 : 0.5));
       hline(lower, withAlpha(th.up, rs ? 0.9 : 0.5));
       hline(50, th.grid);
-      this.polyline(ind.rsi, from, to, x, y, th.accent, 1.4);
+      this.polyline(ind.rsi, from, to, x, y, th.accent, 1.5);
       title = `RSI ${rs?.period ?? 14}  ${Number.isNaN(ind.rsi[idx]) ? '—' : ind.rsi[idx].toFixed(1)}`;
     } else if (this.low === 'stoch') {
       hline(80, withAlpha(th.down, 0.5));
@@ -1018,15 +1076,21 @@ export class CandleChart {
     ctx.lineWidth = 1;
   }
 
-  private tag(xx: number, yy: number, text: string, bg: string, fg: string, width: number, bold = false): void {
+  /** A small label. `edge` adds a coloured bar on the left: the line it belongs to. */
+  private tag(xx: number, yy: number, text: string, bg: string, fg: string, width: number, bold = false, edge?: string): void {
     const ctx = this.ctx;
     ctx.font = `${bold ? '700 ' : ''}11px ${MONO}`;
     ctx.fillStyle = bg;
-    ctx.fillRect(xx, Math.round(yy - 9), width, 18);
+    this.box(xx, Math.round(yy - 9), width, 18, 3);
+    ctx.fill();
     ctx.shadowBlur = 0;
+    if (edge) {
+      ctx.fillStyle = edge;
+      ctx.fillRect(xx, Math.round(yy - 9), 3, 18);
+    }
     ctx.fillStyle = fg;
     ctx.textAlign = 'left';
-    ctx.fillText(text, xx + 6, yy + 0.5);
+    ctx.fillText(text, xx + (edge ? 9 : 6), yy + 0.5);
   }
 
 }
