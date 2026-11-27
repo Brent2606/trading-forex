@@ -10,6 +10,7 @@ They run in their own container next to the bot (`run.sh`, one CPU), not inside 
 | `ml_signal.py` | Is anything predictable in hourly bars before costs, and how does it compare with what a trade costs? |
 | `ml_daily.py` | The learning model on 20 years of daily closes: 2009-2026 all unseen. |
 | `ml_lab.py` | One bench for the learning model on hourly, 4-hour and daily bars: trades its most confident 10 / 5 / 2 / 1% of situations, next to random entries, with a breakdown of where the result comes from. |
+| `carry_daily.py` | Does holding high-interest currencies against low-interest ones pay, after the broker's mark-up on overnight financing? |
 | `mt5/NeonfxExport.mq5` + `icm_import.py` | Export a broker's own history from MetaTrader 5 (bars, real spreads from ticks, swap rates) and check it before use. |
 
 ## Findings (26 November 2026, Yahoo Finance history, 16 pairs)
@@ -60,7 +61,7 @@ years for daily bars.
 | --- | --- | --- | --- |
 | Daily bars 1:1, swing | 2878 (top 10%) | −0.01R (±0.02) | −0.01R |
 | Daily bars 1:2, swing | 2196 (top 10%) | −0.02R (±0.03) | −0.06R |
-| Trend following on daily closes, 30 years | | Sharpe −0.05 to −0.53 after costs | |
+| Trend following on daily closes, 30 years | | Sharpe +0.15 before costs, −0.07 after costs and financing; single lookbacks −0.43 to +0.05 | |
 | 4-hour bars 1:1, long-term picture | 668 | −0.05R (±0.04) | −0.07R |
 | 4-hour bars 1:2, long-term picture | 552 | +0.03R (±0.06) | +0.01R |
 | Hourly 1:2 | 2230 | +0.03R (±0.03) | −0.10R |
@@ -75,6 +76,34 @@ what a trade costs, so it ends at zero, and below zero when costs are a little h
 measured. Swing trading on daily bars, the 4-hour scale, the long-term picture and 1:2 added
 nothing. On the earlier Yahoo data the hourly 1:1 model's top 1% made +0.07R over 578 trades;
 the broker data, with six times the history, does not confirm it.
+
+## Carry (27 November 2026)
+
+A different source of return from predicting prices: hold the currencies with the highest
+central-bank rate against those with the lowest and collect the difference every night. Ranked
+once a month on the rate at the end of the month before; rates from the Bank for International
+Settlements. The broker's cut is read from its own swap rates: what a buyer pays and a seller
+receives differ by 2.2% a year, so 1.1% a year per unit of money held in a pair.
+
+| Top 2 against bottom 2, each side as large as the account | IC Markets closes, 7 currencies, 30 years | Yahoo closes, 8 currencies, 24 years |
+| --- | --- | --- |
+| Before costs | +4.2%/yr at 11% vol, Sharpe 0.37 | +3.8%/yr, Sharpe 0.33 |
+| After the mark-up, held as crosses (cheapest) | +3.1%/yr, Sharpe 0.27 (t = 1.5) | +2.8%/yr, Sharpe 0.24 (t = 1.2) |
+| After the mark-up, each currency against the dollar | +2.3%/yr, Sharpe 0.20 (t = 1.1) | +2.1%/yr, Sharpe 0.18 (t = 0.9) |
+| Worst drop (2008) | −45% | −45% |
+| Last five years, after the mark-up | +1.5%/yr | +1.5%/yr |
+
+Top 3 against bottom 3 and highest against lowest give the same picture, a little weaker. With
+40 random rankings in place of the interest rates the same code makes −0.3%/yr on average
+(never more than +2.3%), so the result comes from the rates and not from the machinery.
+
+**Reading it.** This is the first thing in this folder that is positive after costs on two
+data sets, and it is no discovery: nearly all of it is the interest itself (3.7% a year
+collected on average), and the exchange rate has not taken it back. But it is small, it is
+not statistically firm after the mark-up, and it is paid for with rare, deep losses when
+markets panic. After the broker's cut it earns about what a savings account pays, with a
+−45% year in the history. For the euro the rate series is the main refinancing rate, which
+overstates euro interest by about half a point in 2014-2022.
 
 ## Three traps this folder already fell into
 
@@ -95,6 +124,11 @@ the broker data, with six times the history, does not confirm it.
    +0.32R and nothing anywhere else. `ml_lab.py` now prints that breakdown for every run, and
    `SKIP_HOURS` / `FLAT_HOUR` keep trades away from the rollover.
 
+One more slip, without effect on the conclusions: `trend_daily.py` refreshes Yahoo files in the
+folder it is given, and so replaced the four short broker files in `icm/daily` after the other
+tests had run. `NOFETCH=1` now keeps it away from broker data; the trend figures above are from
+the rerun on broker closes only.
+
 A result that looks too good is a bug until proven otherwise: `ml_daily.py` prints a warning
 when a model ranks better than any honest daily model can.
 
@@ -113,4 +147,5 @@ cd /opt/neonfx-research
 docker run --rm -v /opt/neonfx-research:/work -w /work neonfx-research python icm_import.py icm_raw icm hourly
 ./variants_icm.sh                         # the pre-registered tests
 ./check_icm.sh; ./check2_icm.sh           # where the hourly result comes from; away from the rollover
+docker run --rm -v /opt/neonfx-research:/work -w /work neonfx-research python carry_daily.py icm/daily rates icm_raw/meta.csv
 ```

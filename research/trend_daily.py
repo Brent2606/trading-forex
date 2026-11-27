@@ -8,6 +8,7 @@ position so each pair carries the same risk, and hold. All settings are fixed in
 
 Usage: python trend_daily.py <daily csv folder>
 """
+import os
 import sys
 
 import numpy as np
@@ -54,7 +55,8 @@ def stats(name, r):
 
 
 def main(folder):
-    fetch_daily(folder)
+    if os.environ.get('NOFETCH') != '1':   # NOFETCH=1: the folder holds a broker's own data, leave it alone
+        fetch_daily(folder)
     data = load_daily(folder)
     first = {p: f'{d.index.min():%Y}' for p, d in data.items()}
     per_year = min(len(d) / ((d.index.max() - d.index.min()).days / 365.25) for d in data.values())

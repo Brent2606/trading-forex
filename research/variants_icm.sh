@@ -14,5 +14,5 @@ v icm_h4_11_htf  TF=H4 SL_ATR=1.5 TP_ATR=1.5 HORIZON=30 HTF=1 $LONG
 v icm_h4_12_htf  TF=H4 SL_ATR=1.5 TP_ATR=3   HORIZON=30 HTF=1 $LONG
 v icm_h1_12_base TF=H1 SL_ATR=1.5 TP_ATR=3   HORIZON=48 HTF=0 $LONG
 v icm_h1_11_htf  TF=H1 SL_ATR=1.5 TP_ATR=1.5 HORIZON=24 HTF=1 $LONG
-./run.sh icm_trend trend_daily.py icm/daily
+NOFETCH=1 ./run.sh icm_trend trend_daily.py icm/daily
 echo ALLDONE > variants_icm.done
