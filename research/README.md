@@ -233,15 +233,32 @@ years after.
 | All unseen years, 2015-2026 | 1,614 | +0.10R (random entries: −0.05R) | | +2.26 |
 
 **The bar (Sharpe 0.5 and t 2 on the years after 2021) is not reached**: the Sharpe ratio
-passes, the t-value does not. In fairness to the result, that bar asked for more than five years
-can give: at a Sharpe ratio of 0.6 a t-value of 2 takes eleven years. What can be said: the
-result has the same size in both blocks, 10 of 12 yearly periods are up, it is spread over
-thirteen entry hours and ten pairs, and every possible 8-hour trade taken without the model
-loses 0.05 to 0.08R on either side, so the test itself favours nothing. It is the first
-result here that is positive after costs on years the model never saw, and it is not yet proof.
-Follow-ups under way: the same runs without the clock features, and with doubled spreads.
+passes, the t-value does not. And the candidate does not survive the checks that followed
+(`stack2_icm.sh`, `stack3_icm.sh`; what a real edge should show was committed first).
 
-## Three traps this folder already fell into
+| Most confident 1%, per trade after costs | Unseen years up to 2021 | Years after 2021 |
+| --- | --- | --- |
+| The candidate (8 hours, clock features, seed 7) | +0.11R | **+0.09R** |
+| The same with another random seed (11) | +0.09R | +0.02R |
+| The same with another random seed (23) | +0.02R | −0.06R |
+| Holding 6 hours instead of 8 | −0.01R | −0.10R |
+| Holding 10 hours instead of 8 | +0.03R | 0.00R |
+| 8 hours, doubled spreads and 0.5 pip extra cost | −0.02R | +0.01R |
+| 8 hours without the clock features | +0.07R | −0.03R |
+| 4 hours, with clock features | +0.04R | −0.02R |
+
+The seed only changes which rows and features each tree happens to see. A result that goes
+from +0.09R to −0.06R with another seed, and to −0.10R with a holding time two hours shorter,
+was luck in which trades happened to land in the top 1%. **The candidate is rejected.** What
+does hold in every run: the model beats random entries by 0.05 to 0.15R, which is again about
+what a trade costs. Before 2021 nearly every setting was slightly positive; after 2021 the
+average is zero.
+
+One thing learned about the bench itself: at the most confident 1% a single run carries a
+noise of about ±0.06R from the seed alone. No setting should be believed on one seed.
+
+## Four traps this folder already fell into
+## Four traps this folder already fell into
 
 1. **Asking the data source for "all" daily history returns monthly bars.** The first trend
    test ran on 277 rows per pair and reported a Sharpe above 5. `fetch_daily` now asks in
@@ -264,6 +281,12 @@ One more slip, without effect on the conclusions: `trend_daily.py` refreshes Yah
 folder it is given, and so replaced the four short broker files in `icm/daily` after the other
 tests had run. `NOFETCH=1` now keeps it away from broker data; the trend figures above are from
 the rerun on broker closes only.
+
+4. **One good cell out of sixteen.** The stacking candidate was chosen by a rule fixed in
+   advance and still confirmed on five unseen years (+0.09R a trade). It was nevertheless
+   luck: it was the only one of sixteen neighbouring settings that stayed positive, and it
+   vanished with another random seed. A confirmation on unseen years is necessary, not
+   sufficient; neighbours and seeds have to agree.
 
 A result that looks too good is a bug until proven otherwise: `ml_daily.py` prints a warning
 when a model ranks better than any honest daily model can.
