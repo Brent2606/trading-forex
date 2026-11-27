@@ -74,7 +74,7 @@ DAILY_OHLC = os.environ.get('DAILY_OHLC', '0') == '1'
 CLOSE_ONLY = TF == 'D1' and not DAILY_OHLC   # closes only: decisions and exits once a day, on the close
 SWAP_PER_YEAR = 0.01
 PARAMS = dict(objective='binary', learning_rate=0.05, num_leaves=31, min_data_in_leaf=400 if TF != 'D1' else 150,
-              feature_fraction=0.7, bagging_fraction=0.7, bagging_freq=1, lambda_l2=10.0, verbose=-1, num_threads=1, seed=7)
+              feature_fraction=0.7, bagging_fraction=0.7, bagging_freq=1, lambda_l2=10.0, verbose=-1, num_threads=1, seed=int(os.environ.get('SEED', 7)))
 ROUNDS = 200
 
 
