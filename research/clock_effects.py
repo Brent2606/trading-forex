@@ -221,7 +221,7 @@ def main(hourly_folder, rates_folder, meta_path):
     rates, _ = load_rates(rates_folder, until)
     meta = pd.read_csv(meta_path, comment='#', encoding='latin-1').set_index('pair')
     # The broker's cut: half the gap between what a buyer pays and a seller receives, per year.
-    cuts = [-(m['swap_long'] + m['swap_short']) / 2 * float(m['point']) / float(tables[p][FIRST_HOUR].iloc[-1]) * 365
+    cuts = [-(m['swap_long'] + m['swap_short']) / 2 * float(m['point']) / float(tables[p][FIRST_HOUR].dropna().iloc[-1]) * 365
             for p, m in meta.iterrows() if p in tables and m['swap_mode'] == 'SYMBOL_SWAP_MODE_POINTS']
     markup = float(np.median(cuts))
     print(f'{len(tables)} pairs, hourly bars {min(t.index[0] for t in tables.values()):%Y-%m} to {until:%Y-%m} · broker mark-up on interest {markup * 100:.2f}%/yr')

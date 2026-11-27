@@ -12,6 +12,7 @@ They run in their own container next to the bot (`run.sh`, one CPU), not inside 
 | `ml_lab.py` | One bench for the learning model on hourly, 4-hour and daily bars: trades its most confident 10 / 5 / 2 / 1% of situations, next to random entries, with a breakdown of where the result comes from. |
 | `carry_daily.py` | Does holding high-interest currencies against low-interest ones pay, after the broker's mark-up on overnight financing? |
 | `fx_styles.py` | Do value (purchasing power) and dollar carry improve on carry, alone or together? With the bar the combination had to clear. |
+| `clock_effects.py` | Two effects that follow the clock: the night a broker books three days of interest at once, and moves that recur at the same hours of the day. |
 | `mt5/NeonfxExport.mq5` + `icm_import.py` | Export a broker's own history from MetaTrader 5 (bars, real spreads from ticks, swap rates) and check it before use. |
 
 ## Findings (26 November 2026, Yahoo Finance history, 16 pairs)
@@ -155,6 +156,46 @@ starts after the 2008 crash: over the same years (from 2009) the two sources agr
 0.05 on every line. Carry on its own remains the one positive result, at about a savings
 account's return. It is not built into the bot.
 
+## Effects that follow the clock (`clock_effects.py`, 27 November 2026)
+
+Both tests and their bar (Sharpe 0.5 and t 2 after all costs) were committed before the first
+run; 16 years of the broker's hourly bars, fills at bid / ask at the spread of that hour.
+
+**A. The triple-swap night.** A broker books interest on open positions once a day at the
+rollover, and three days at once in the night from Wednesday to Thursday. The test: open an
+hour before that rollover on the side that receives interest, close two hours after it.
+
+| | Result |
+| --- | --- |
+| Price move in those three hours toward the receiving side, all pairs | Wednesday −1.6 pips (t = −10.3), other nights −0.1 pips |
+| The same, measured in days of interest given back | Mon −0.8, Tue −0.6, Thu −0.9 and Wed **−4.7** days (each ±0.2 to 0.3) |
+| The trade, all pairs where interest beats cost, 476 weeks | −2.5%/yr of the money in the trades, Sharpe −2.1 (t = −6.5), 0 of 13 years up |
+
+The interest is no gift. A currency pair is quoted for delivery two working days later; at the
+rollover that date moves on a day, three days on Wednesday, and the price moves by exactly that
+much interest. The swap makes up for it, less the broker's cut. On Wednesday the price even
+gives back more than three days, most of all in yen pairs.
+
+Looked at afterwards, so no test: taking the other side (selling the receiving side and paying
+the interest) makes nothing over all pairs (Sharpe 0.18). For yen pairs alone in 2022-2026 it
+made +2.8 pips a trade (Sharpe 1.0, t = 2.0), but that subset was picked because it looked
+best, the broker's real swap is about 0.8 pips dearer than modelled, and at today's interest
+difference nothing is left. Not pursued.
+
+**B. Time of day.** For each pair and year: the strongest run of rising hours and of falling
+hours over the four years before, traded every day of the next year if larger than the cost.
+
+| All pairs together, years the rule never saw | Result |
+| --- | --- |
+| Does one period's pattern come back the next year? | Correlation +0.16 |
+| Before costs | +1.7%/yr of the money in the trades at 1.7% vol, Sharpe +0.98 (t = +3.6), 12 of 13 years up |
+| After costs | −1.3%/yr, Sharpe −0.79, 2 of 13 years up |
+| Per trade | +0.1 to +1.7 pips before costs, against a cost of 1.0 to 2.0 pips |
+
+**Reading it.** The same picture as with the learning model: there are real, repeatable
+effects in these markets, and they are worth about one pip a trade, which is what a trade
+costs. Commission alone is 0.5 to 1.3 pips. Neither test reaches the bar.
+
 ## Three traps this folder already fell into
 
 1. **Asking the data source for "all" daily history returns monthly bars.** The first trend
@@ -199,4 +240,6 @@ docker run --rm -v /opt/neonfx-research:/work -w /work neonfx-research python ic
 ./check_icm.sh; ./check2_icm.sh           # where the hourly result comes from; away from the rollover
 docker run --rm -v /opt/neonfx-research:/work -w /work neonfx-research python carry_daily.py icm/daily rates icm_raw/meta.csv
 docker run --rm -v /opt/neonfx-research:/work -w /work neonfx-research python fx_styles.py icm/daily rates icm_raw/meta.csv
+docker run --rm -e SPREADS=/work/icm/spreads.json -v /opt/neonfx-research:/work -w /work neonfx-research python clock_effects.py icm/hourly rates icm_raw/meta.csv
+./stack_icm.sh                            # the learning model with clock features, intraday with a fixed holding time
 ```
