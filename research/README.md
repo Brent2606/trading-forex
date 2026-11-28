@@ -257,6 +257,34 @@ average is zero.
 One thing learned about the bench itself: at the most confident 1% a single run carries a
 noise of about ±0.06R from the seed alone. No setting should be believed on one seed.
 
+## Does the model read direction, or only pick cheap moments? (`fx_matched.sh`, 27 November 2026)
+
+Trying the scripts for other markets on made-up random walks showed something awkward: the
+model "beat" random entries there by 0.04 to 0.08R, although a random walk has no direction to
+read. It simply chose the market and hour where a trade is cheapest. So the two currency runs
+behind the statement "the model beats random entries" were repeated unchanged (same seed, the
+same trades) with two more yardsticks: all entries in the same pair, hour and side that year,
+and the opposite trade entered on the very same bar. The opposite trade pays the same costs at
+the same moment, so half the gap between the two is what choosing the side was worth.
+
+| Most confident 10%, per trade | Stop and target, flat before the rollover (13 unseen years, 24,700 trades) | In for 8 hours, clock features (12 years, 14,313 trades) |
+| --- | --- | --- |
+| Result after costs | −0.018R | +0.007R |
+| Random entries | −0.061R | −0.062R |
+| All entries in the same pair, hour and side | −0.072R | −0.055R |
+| The opposite trade on the same bars | −0.128R | −0.129R |
+| **Choosing the side is worth** | **+0.055R** (per-day t = +7.4) | **+0.068R** (per-day t = +4.2) |
+| A trade at the moments it picks costs | 0.073R | 0.061R |
+
+The other buckets say the same: +0.052R, +0.051R and +0.070R for the most confident 5%, 2% and
+1% of the first run (per-day t 5.1, 3.1, 3.1), against a cost of 0.07R each time.
+
+**Reading it.** On currencies the worry does not hold: the model picks moments that are no
+cheaper than average (it trades mostly in the quiet Asian hours, where a trade is relatively
+dear), and what it earns over random entries is direction. This is the clearest figure so far
+for what the model knows: choosing the side is worth about 0.055R a trade, measured far beyond
+chance, and acting on it costs 0.073R. The gap is a quarter of the costs.
+
 ## Other markets: gold, oil and stock indices (plan written down 27 November 2026, before the data existed)
 
 **Why.** On currencies every real effect found so far is worth about what a trade costs: a
@@ -380,6 +408,7 @@ docker run --rm -v /opt/neonfx-research:/work -w /work neonfx-research python ca
 docker run --rm -v /opt/neonfx-research:/work -w /work neonfx-research python fx_styles.py icm/daily rates icm_raw/meta.csv
 docker run --rm -e SPREADS=/work/icm/spreads.json -v /opt/neonfx-research:/work -w /work neonfx-research python clock_effects.py icm/hourly rates icm_raw/meta.csv
 ./stack_icm.sh                            # the learning model with clock features, intraday with a fixed holding time
+./fx_matched.sh                           # direction or cheap moments? the same runs with two more yardsticks
 
 # gold, oil and stock indices: run mt5/NeonfxExportMarkets.mq5 in MetaTrader 5, copy MQL5/Files/neonfx_markets/* to mkt_raw/
 docker run --rm -v /opt/neonfx-research:/work -w /work neonfx-research python icm_import_markets.py mkt_raw mkt
